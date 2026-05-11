@@ -28,6 +28,13 @@ export default function AdminPage() {
     var result = await supabase.auth.getUser();
     var u = result.data.user;
     if (!u) { router.push("/login"); return; }
+
+    var profileResult = await supabase.from("profiles").select("role").eq("id", u.id).single();
+    if (!profileResult.data || profileResult.data.role !== "admin") {
+      router.push("/dashboard");
+      return;
+    }
+
     setUser(u);
 
     var response = await supabase
