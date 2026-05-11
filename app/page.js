@@ -132,7 +132,7 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="text-center px-6 py-6" style={{ borderTop: "1px solid var(--border)" }}>
         <p className="text-xs" style={{ color: "var(--text-dim)" }}>
-          CreditScore Pro by Karvonix.io · © 2026 All rights reserved
+          CreditScore Pro by towfiqul.com · © 2026 All rights reserved
         </p>
       </footer>
     </div>
