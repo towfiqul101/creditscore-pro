@@ -89,8 +89,13 @@ export default function NewAnalysis() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Analysis failed");
-      router.push(`/analysis/${data.id}`);
-    } catch (err) {
+      if (data.id) {
+        router.push(`/analysis/${data.id}`);
+      } else {
+        // DB save failed but analysis worked - show results in alert
+        alert(`Analysis complete! Score: ${data.analysis.score}/10. DB save error: ${data.dbError || "unknown"}. Check Vercel logs.`);
+        setLoading(false);
+      } catch (err) {
       setError(err.message);
       setLoading(false);
     }

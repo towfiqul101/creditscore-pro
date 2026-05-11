@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 import { analyzeCredit } from "@/lib/analysis";
 import { createAdminClient } from "@/lib/supabase-server";
-import { syncToGHL } from "@/lib/ghl";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export async function POST(request) {
   try {
@@ -14,18 +10,18 @@ export async function POST(request) {
     // Step 1: Run local rule-based analysis
     const analysis = analyzeCredit(formData);
 
-    // Step 2: Enhance with AI for personalized recommendations
-    const aiEnhanced = await enhanceWithAI(analysis, formData);
+    // Step 2: Enhance with Groq AI (free)
+    const aiEnhanced = await enhanceWithGroq(analysis, formData);
 
-    // Step 3: Merge AI insights into results
+    // Step 3: Merge AI insights
     const finalAnalysis = {
       ...analysis,
       results: analysis.results.map((r, i) => ({
         ...r,
         aiInsight: aiEnhanced.insights?.[i] || null,
       })),
-      summary: aiEnhanced.summary || null,
-      priorityActions: aiEnhanced.priorityActions || [],
+      summary: aiEnhanced.summary || `Your funding readiness score is ${analysis.score}/10 (${analysis.percentage}%). Average FICO 8 is ${analysis.avgScore}.`,
+      priorityActions: aiEnhanced.priorityActions || analysis.results.filter(r => !r.passed).slice(0, 3).map(r => r.action),
     };
 
     // Step 4: Save to database
@@ -34,7 +30,7 @@ export async function POST(request) {
       .from("analyses")
       .insert({
         user_id: userId,
-        tenant_id: tenantId,
+        tenant_id: tenantId || null,
         contact_first_name: formData.firstName,
         contact_last_name: formData.lastName,
         contact_email: formData.email,
@@ -56,30 +52,12 @@ export async function POST(request) {
 
     if (dbError) {
       console.error("DB save error:", dbError);
-    }
-
-    // Step 5: Sync to GHL if tenant has it configured
-    if (tenantId) {
-      const { data: tenant } = await supabase
-        .from("tenants")
-        .select("ghl_api_key, ghl_location_id")
-        .eq("id", tenantId)
-        .single();
-
-      if (tenant?.ghl_api_key && tenant?.ghl_location_id) {
-        const ghlResult = await syncToGHL({
-          ghlApiKey: tenant.ghl_api_key,
-          locationId: tenant.ghl_location_id,
-          contactData: {
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-            email: formData.email,
-            phone: formData.phone,
-          },
-          analysisResults: finalAnalysis,
-        });
-        finalAnalysis.ghlSync = ghlResult;
-      }
+      return NextResponse.json({
+        success: true,
+        analysis: finalAnalysis,
+        id: null,
+        dbError: dbError.message,
+      });
     }
 
     return NextResponse.json({
@@ -93,48 +71,46 @@ export async function POST(request) {
   }
 }
 
-async function enhanceWithAI(analysis, formData) {
+async function enhanceWithGroq(analysis, formData) {
   try {
-    const prompt = `You are a credit analysis expert. A client has completed a credit analysis with these results:
+    const prompt = `You are a credit analysis expert. A client has these results:
 
 FICO Scores: TransUnion ${formData.scoreTU}, Experian ${formData.scoreEX}, Equifax ${formData.scoreEQ}
-Utilization: ${formData.utilization}%
-Primary Accounts: ${formData.primaryAccounts}
-Credit Age: ${formData.creditAge} years
-Late Payments (24mo): ${formData.latePayments}
-Negative Items: ${formData.negativeItems}
-Highest Card Limit: $${formData.highestLimit}
-Inquiries per Bureau: ${formData.inquiries}
-Personal Info Correct: ${formData.personalInfo}
-Report Errors: ${formData.errors}
+Utilization: ${formData.utilization}%, Primary Accounts: ${formData.primaryAccounts}
+Credit Age: ${formData.creditAge} years, Late Payments: ${formData.latePayments}
+Negative Items: ${formData.negativeItems}, Highest Limit: $${formData.highestLimit}
+Inquiries: ${formData.inquiries}, Personal Info Correct: ${formData.personalInfo}
+Errors: ${formData.errors}
 
-Funding Readiness Score: ${analysis.score}/10
-Estimated Funding: ${analysis.estimatedFunding}
+Funding Readiness: ${analysis.score}/10, Estimated Funding: ${analysis.estimatedFunding}
 
-Provide:
-1. A 2-3 sentence personalized summary of their credit standing and funding potential
-2. Top 3 priority actions they should take RIGHT NOW, in order of impact
-3. For each of the 10 criteria, provide a brief personalized insight (1 sentence each)
+Provide a JSON response with:
+1. "summary": 2-3 sentence personalized summary
+2. "priorityActions": top 3 actions as array of strings
+3. "insights": array of 10 brief insights (1 sentence each for each criteria)
 
-Respond in JSON format:
-{
-  "summary": "...",
-  "priorityActions": ["action1", "action2", "action3"],
-  "insights": ["insight for criteria 1", "insight for criteria 2", ..., "insight for criteria 10"]
-}`;
+Respond ONLY with valid JSON, no markdown.`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      max_tokens: 800,
-      temperature: 0.7,
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_tokens: 800,
+        temperature: 0.7,
+      }),
     });
 
-    const content = completion.choices[0]?.message?.content;
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
     return JSON.parse(content);
   } catch (error) {
-    console.error("AI enhancement error:", error);
+    console.error("Groq AI error:", error);
     return { summary: null, priorityActions: [], insights: [] };
   }
 }
