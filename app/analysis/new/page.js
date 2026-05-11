@@ -134,12 +134,12 @@ export default function NewAnalysis() {
 
       <div className="max-w-lg mx-auto px-6 py-8">
         <div className="flex gap-2 mb-6 p-1 rounded-xl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={function() { setInputMode("form"); }}
+          <button onClick={function() { setInputMode("form"); setError(""); }}
             className="flex-1 py-2.5 rounded-lg text-xs font-medium transition-all"
             style={{ background: inputMode === "form" ? "rgba(57,255,20,0.12)" : "transparent", color: inputMode === "form" ? "var(--brand)" : "var(--text-muted)" }}>
             Manual entry
           </button>
-          <button onClick={function() { setInputMode("upload"); }}
+          <button onClick={function() { setInputMode("upload"); setError(""); }}
             className="flex-1 py-2.5 rounded-lg text-xs font-medium transition-all"
             style={{ background: inputMode === "upload" ? "rgba(57,255,20,0.12)" : "transparent", color: inputMode === "upload" ? "var(--brand)" : "var(--text-muted)" }}>
             Upload report (PDF)
@@ -162,8 +162,8 @@ export default function NewAnalysis() {
               ) : (
                 <div>
                   <div className="text-3xl mb-3">📄</div>
-                  <p className="text-sm font-medium mb-1">Upload your trimerge credit report</p>
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>PDF or image, up to 20MB. AI will extract all data automatically.</p>
+                  <p className="text-sm font-medium mb-1">Upload client trimerge credit report</p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>PDF format, up to 20MB. AI will extract all data automatically.</p>
                 </div>
               )}
             </div>
@@ -192,18 +192,19 @@ export default function NewAnalysis() {
 
             {step === 1 && (
               <div className="space-y-3">
+                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Enter your client's contact information</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="First name" value={form.firstName} onChange={function(v) { update("firstName", v); }} placeholder="John" />
-                  <Field label="Last name" value={form.lastName} onChange={function(v) { update("lastName", v); }} placeholder="Doe" />
+                  <Field label="Client first name" value={form.firstName} onChange={function(v) { update("firstName", v); }} placeholder="John" />
+                  <Field label="Client last name" value={form.lastName} onChange={function(v) { update("lastName", v); }} placeholder="Doe" />
                 </div>
-                <Field label="Email" type="email" value={form.email} onChange={function(v) { update("email", v); }} placeholder="john@email.com" />
-                <Field label="Phone (optional)" type="tel" value={form.phone} onChange={function(v) { update("phone", v); }} placeholder="(555) 123-4567" />
+                <Field label="Client email" type="email" value={form.email} onChange={function(v) { update("email", v); }} placeholder="john@email.com" />
+                <Field label="Client phone (optional)" type="tel" value={form.phone} onChange={function(v) { update("phone", v); }} placeholder="(555) 123-4567" />
               </div>
             )}
 
             {step === 2 && (
               <div className="space-y-3">
-                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Enter your FICO 8 scores from each bureau</p>
+                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Enter client's FICO 8 scores from each bureau</p>
                 <Field label="TransUnion" type="number" value={form.scoreTU} onChange={function(v) { update("scoreTU", v); }} placeholder="720" />
                 <Field label="Experian" type="number" value={form.scoreEX} onChange={function(v) { update("scoreEX", v); }} placeholder="715" />
                 <Field label="Equifax" type="number" value={form.scoreEQ} onChange={function(v) { update("scoreEQ", v); }} placeholder="710" />
@@ -212,6 +213,7 @@ export default function NewAnalysis() {
 
             {step === 3 && (
               <div className="space-y-3">
+                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>From the client's credit report</p>
                 <Field label="Highest utilization on any card (%)" type="number" value={form.utilization} onChange={function(v) { update("utilization", v); }} placeholder="25" />
                 <Field label="Number of open primary accounts" type="number" value={form.primaryAccounts} onChange={function(v) { update("primaryAccounts", v); }} placeholder="5" />
                 <Field label="Average credit age (years)" type="number" value={form.creditAge} onChange={function(v) { update("creditAge", v); }} placeholder="3" />
@@ -222,6 +224,7 @@ export default function NewAnalysis() {
 
             {step === 4 && (
               <div className="space-y-3">
+                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Negative factors on the client's report</p>
                 <div>
                   <label className="block text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Is personal info correct across all bureaus?</label>
                   <div className="flex gap-2">
