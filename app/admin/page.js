@@ -30,7 +30,6 @@ export default function AdminPage() {
     if (!u) { router.push("/login"); return; }
 
     var profileResult = await supabase.from("profiles").select("role").eq("id", u.id).single();
-    alert("User ID: " + u.id + " | Profile data: " + JSON.stringify(profileResult.data) + " | Error: " + JSON.stringify(profileResult.error));
     if (!profileResult.data || profileResult.data.role !== "admin") {
       router.push("/dashboard");
       return;
