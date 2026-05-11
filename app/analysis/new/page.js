@@ -1,296 +1,503 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
-import { createClient } from "@/lib/supabase-browser";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase-browser";
 import Link from "next/link";
 
 var STEPS = [
-  { id: 1, label: "Client Info" },
-  { id: 2, label: "Bureau Scores" },
-  { id: 3, label: "Credit Profile" },
-  { id: 4, label: "Negative Factors" },
+  { id: 1, label: "Credit Scores" },
+  { id: 2, label: "Credit Profile" },
+  { id: 3, label: "Contact Info" },
 ];
 
-export default function NewAnalysis() {
-  var [user, setUser] = useState(null);
+var EMPTY_FORM = {
+  firstName: "", lastName: "", email: "", phone: "",
+  scoreTU: "", scoreEX: "", scoreEQ: "",
+  utilization: "", primaryAccounts: "", creditAge: "",
+  latePayments: "0", negativeItems: "0",
+  highestLimit: "", inquiries: "",
+  personalInfo: "yes", errors: "no",
+};
+
+export default function NewAnalysisPage() {
   var [step, setStep] = useState(1);
+  var [form, setForm] = useState(EMPTY_FORM);
+  var [user, setUser] = useState(null);
+  var [tenant, setTenant] = useState(null);
   var [loading, setLoading] = useState(false);
-  var [uploading, setUploading] = useState(false);
+  var [pageLoading, setPageLoading] = useState(true);
   var [error, setError] = useState("");
-  var [inputMode, setInputMode] = useState("form");
-  var fileRef = useRef(null);
+  var [uploadMode, setUploadMode] = useState(false);
+  var [uploadFile, setUploadFile] = useState(null);
+  var [uploading, setUploading] = useState(false);
   var router = useRouter();
   var supabase = createClient();
 
-  var [form, setForm] = useState({
-    firstName: "", lastName: "", email: "", phone: "",
-    scoreTU: "", scoreEX: "", scoreEQ: "",
-    personalInfo: "yes", errors: "0",
-    utilization: "", primaryAccounts: "", creditAge: "",
-    latePayments: "0", negativeItems: "0", highestLimit: "", inquiries: "",
-  });
-
-  useEffect(function() {
-    async function checkAuth() {
-      var result = await supabase.auth.getUser();
-      var u = result.data.user;
-      if (!u) router.push("/login");
-      else setUser(u);
-    }
-    checkAuth();
+  useEffect(function () {
+    loadUserAndTenant();
   }, []);
 
-  function update(field, val) {
-    setForm(function(prev) { return Object.assign({}, prev, { [field]: val }); });
+  async function loadUserAndTenant() {
+    try {
+      var result = await supabase.auth.getUser();
+      var u = result.data.user;
+      if (!u) { router.push("/login"); return; }
+      setUser(u);
+
+      // Look up which tenant this user belongs to
+      var memberResult = await supabase
+        .from("tenant_members")
+        .select("tenant_id, role, tenants(*)")
+        .eq("user_id", u.id)
+        .single();
+
+      if (memberResult.data && memberResult.data.tenants) {
+        setTenant(memberResult.data.tenants);
+      }
+      // Note: if no tenant found, analyses still save — just without GHL sync
+    } catch (err) {
+      console.error("Error loading tenant:", err);
+    } finally {
+      setPageLoading(false);
+    }
   }
 
+  function update(field, val) {
+    setForm(function (prev) { return Object.assign({}, prev, { [field]: val }); });
+  }
+
+  function nextStep() {
+    if (step === 1 && (!form.scoreTU || !form.scoreEX || !form.scoreEQ)) {
+      setError("Please enter all three bureau scores");
+      return;
+    }
+    if (step === 2 && (!form.utilization || !form.primaryAccounts || !form.creditAge || !form.highestLimit || !form.inquiries)) {
+      setError("Please fill in all credit profile fields");
+      return;
+    }
+    setError("");
+    setStep(function (s) { return s + 1; });
+  }
+
+  function prevStep() { setStep(function (s) { return s - 1; }); }
+
   async function handleUpload(e) {
-    var file = e.target.files ? e.target.files[0] : null;
+    var file = e.target.files[0];
     if (!file) return;
+    setUploadFile(file);
     setUploading(true);
     setError("");
+
     try {
-      var fd = new FormData();
-      fd.append("file", file);
-      var res = await fetch("/api/upload", { method: "POST", body: fd });
+      var formData = new FormData();
+      formData.append("file", file);
+
+      var res = await fetch("/api/upload", { method: "POST", body: formData });
       var data = await res.json();
-      if (!data.success) throw new Error(data.error || "Upload failed");
-      var d = data.extractedData;
-      setForm({
-        firstName: d.firstName || "", lastName: d.lastName || "",
-        email: form.email, phone: form.phone,
-        scoreTU: String(d.scoreTU || ""), scoreEX: String(d.scoreEX || ""), scoreEQ: String(d.scoreEQ || ""),
-        personalInfo: d.personalInfo || "yes", errors: String(d.errors || "0"),
-        utilization: String(d.utilization || ""), primaryAccounts: String(d.primaryAccounts || ""),
-        creditAge: String(d.creditAge || ""), latePayments: String(d.latePayments || "0"),
-        negativeItems: String(d.negativeItems || "0"), highestLimit: String(d.highestLimit || ""),
-        inquiries: String(d.inquiries || ""),
-      });
-      setInputMode("form");
-      setStep(1);
+
+      if (data.success && data.extractedData) {
+        var d = data.extractedData;
+        setForm(function (prev) {
+          return Object.assign({}, prev, {
+            firstName: d.firstName || prev.firstName,
+            lastName: d.lastName || prev.lastName,
+            email: d.email || prev.email,
+            phone: d.phone || prev.phone,
+            scoreTU: d.scoreTU || prev.scoreTU,
+            scoreEX: d.scoreEX || prev.scoreEX,
+            scoreEQ: d.scoreEQ || prev.scoreEQ,
+            utilization: d.utilization || prev.utilization,
+            primaryAccounts: d.primaryAccounts || prev.primaryAccounts,
+            creditAge: d.creditAge || prev.creditAge,
+            latePayments: d.latePayments || prev.latePayments,
+            negativeItems: d.negativeItems || prev.negativeItems,
+            highestLimit: d.highestLimit || prev.highestLimit,
+            inquiries: d.inquiries || prev.inquiries,
+            personalInfo: d.personalInfo || prev.personalInfo,
+            errors: d.errors || prev.errors,
+          });
+        });
+        setUploadMode(false);
+      } else {
+        setError(data.error || "Could not extract data from file. Please enter manually.");
+      }
     } catch (err) {
-      setError(err.message);
+      setError("Upload failed. Please try again or enter manually.");
     } finally {
       setUploading(false);
     }
   }
 
   async function handleSubmit() {
-    setLoading(true);
+    if (!form.firstName || !form.lastName || !form.email) {
+      setError("First name, last name, and email are required");
+      return;
+    }
     setError("");
+    setLoading(true);
+
     try {
       var res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ formData: form, userId: user ? user.id : null }),
+        body: JSON.stringify({
+          formData: form,
+          userId: user ? user.id : null,
+          tenantId: tenant ? tenant.id : null,   // ← KEY FIX: pass tenant
+        }),
       });
+
       var data = await res.json();
-      if (!data.success) throw new Error(data.error || "Analysis failed");
-      if (data.id) {
-        router.push("/analysis/" + data.id);
+      if (data.success) {
+        router.push("/analysis/" + data.id + "?new=1");
       } else {
-        var score = data.analysis ? data.analysis.score : "?";
-        var dbErr = data.dbError || "unknown";
-        alert("Analysis complete! Score: " + score + "/10. DB error: " + dbErr);
-        setLoading(false);
+        setError(data.error || "Analysis failed. Please try again.");
       }
     } catch (err) {
-      setError(err.message);
+      setError("Something went wrong. Please try again.");
+    } finally {
       setLoading(false);
     }
   }
 
-  function canNext() {
-    if (step === 1) return form.firstName && form.lastName && form.email;
-    if (step === 2) return form.scoreTU && form.scoreEX && form.scoreEQ;
-    if (step === 3) return form.utilization && form.primaryAccounts && form.creditAge && form.highestLimit && form.inquiries;
-    return true;
+  if (pageLoading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-deep)" }}>
+        <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>Loading...</div>
+      </div>
+    );
   }
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg)" }}>
-      <div className="text-center animate-fade-up">
-        <div className="relative w-20 h-20 mx-auto mb-6">
-          <div className="absolute inset-0 rounded-full border-2 animate-spin" style={{ borderColor: "transparent", borderTopColor: "var(--brand)" }} />
-          <div className="absolute inset-3 rounded-full border-2 animate-spin" style={{ borderColor: "transparent", borderBottomColor: "var(--brand-dark)", animationDirection: "reverse", animationDuration: "1.5s" }} />
-          <div className="absolute inset-0 flex items-center justify-center text-xs font-bold" style={{ color: "var(--brand)" }}>AI</div>
-        </div>
-        <p className="text-sm font-medium mb-1" style={{ color: "var(--brand)" }}>Analyzing credit profile</p>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Scoring 10 funding criteria with AI...</p>
-      </div>
-    </div>
-  );
-
   return (
-    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
-      <header className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
-        <Link href="/dashboard" className="flex items-center gap-2.5" style={{ textDecoration: "none", color: "inherit" }}>
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
-            style={{ background: "rgba(57,255,20,0.12)", color: "var(--brand)" }}>CS</div>
-          <span className="text-sm font-semibold">CreditScore Pro</span>
-        </Link>
-        <Link href="/dashboard" className="text-xs" style={{ color: "var(--text-muted)" }}>Back to dashboard</Link>
-      </header>
-
-      <div className="max-w-lg mx-auto px-6 py-8">
-        <div className="flex gap-2 mb-6 p-1 rounded-xl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={function() { setInputMode("form"); setError(""); }}
-            className="flex-1 py-2.5 rounded-lg text-xs font-medium transition-all"
-            style={{ background: inputMode === "form" ? "rgba(57,255,20,0.12)" : "transparent", color: inputMode === "form" ? "var(--brand)" : "var(--text-muted)" }}>
-            Manual entry
-          </button>
-          <button onClick={function() { setInputMode("upload"); setError(""); }}
-            className="flex-1 py-2.5 rounded-lg text-xs font-medium transition-all"
-            style={{ background: inputMode === "upload" ? "rgba(57,255,20,0.12)" : "transparent", color: inputMode === "upload" ? "var(--brand)" : "var(--text-muted)" }}>
-            Upload report (PDF)
-          </button>
+    <div style={{ minHeight: "100vh", background: "var(--bg-deep)", padding: "24px 16px" }}>
+      {/* Header */}
+      <div style={{ maxWidth: "560px", margin: "0 auto 24px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Link href="/dashboard" style={{ color: "var(--text-muted)", fontSize: "13px", textDecoration: "none" }}>
+            ← Dashboard
+          </Link>
+          {/* GHL sync indicator */}
+          {tenant && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: "6px",
+              padding: "4px 10px", borderRadius: "20px",
+              background: tenant.ghl_enabled ? "rgba(57,255,20,0.1)" : "rgba(255,255,255,0.05)",
+              border: "1px solid " + (tenant.ghl_enabled ? "rgba(57,255,20,0.3)" : "var(--border)"),
+            }}>
+              <div style={{
+                width: "6px", height: "6px", borderRadius: "50%",
+                background: tenant.ghl_enabled ? "var(--brand)" : "var(--text-dim)",
+              }} />
+              <span style={{ fontSize: "11px", color: tenant.ghl_enabled ? "var(--brand)" : "var(--text-dim)" }}>
+                {tenant.ghl_enabled ? "GHL Sync On" : "GHL Sync Off"}
+              </span>
+            </div>
+          )}
         </div>
 
-        {inputMode === "upload" && (
-          <div className="animate-fade-up">
-            <div className="rounded-2xl p-8 text-center cursor-pointer transition-all hover:opacity-90"
-              style={{ background: "var(--surface)", border: "2px dashed var(--border-light)" }}
-              onClick={function() { if (fileRef.current) fileRef.current.click(); }}>
-              <input ref={fileRef} type="file" accept=".pdf,image/*" onChange={handleUpload} className="hidden" />
-              {uploading ? (
-                <div>
-                  <div className="w-10 h-10 mx-auto mb-3 rounded-full border-2 animate-spin"
-                    style={{ borderColor: "var(--border)", borderTopColor: "var(--brand)" }} />
-                  <p className="text-sm font-medium" style={{ color: "var(--brand)" }}>Parsing with AI...</p>
-                  <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Extracting credit data from your report</p>
-                </div>
-              ) : (
-                <div>
-                  <div className="text-3xl mb-3">📄</div>
-                  <p className="text-sm font-medium mb-1">Upload client trimerge credit report</p>
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>PDF format, up to 20MB. AI will extract all data automatically.</p>
-                </div>
-              )}
+        <h1 style={{ fontSize: "22px", fontWeight: "700", margin: "16px 0 4px", color: "var(--text)" }}>
+          New Credit Analysis
+        </h1>
+        <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
+          {tenant ? tenant.name : "Personal"} — Step {step} of {STEPS.length}
+        </p>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ maxWidth: "560px", margin: "0 auto 24px" }}>
+        <div style={{ display: "flex", gap: "6px" }}>
+          {STEPS.map(function (s) {
+            return (
+              <div key={s.id} style={{
+                flex: 1, height: "4px", borderRadius: "2px",
+                background: step >= s.id ? "var(--brand)" : "var(--border)",
+                transition: "background 0.3s",
+              }} />
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px" }}>
+          {STEPS.map(function (s) {
+            return (
+              <span key={s.id} style={{ fontSize: "11px", color: step >= s.id ? "var(--brand)" : "var(--text-dim)" }}>
+                {s.label}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Form card */}
+      <div style={{
+        maxWidth: "560px", margin: "0 auto",
+        background: "var(--bg-card)", borderRadius: "16px",
+        border: "1px solid var(--border)", padding: "28px 24px",
+      }}>
+        {/* PDF Upload toggle (step 1 only) */}
+        {step === 1 && (
+          <div style={{ marginBottom: "24px" }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
+              <button onClick={function () { setUploadMode(false); }}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
+                  fontWeight: "600", cursor: "pointer", border: "1.5px solid",
+                  borderColor: !uploadMode ? "var(--brand)" : "var(--border)",
+                  background: !uploadMode ? "rgba(57,255,20,0.1)" : "transparent",
+                  color: !uploadMode ? "var(--brand)" : "var(--text-muted)",
+                }}>
+                Manual Entry
+              </button>
+              <button onClick={function () { setUploadMode(true); }}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
+                  fontWeight: "600", cursor: "pointer", border: "1.5px solid",
+                  borderColor: uploadMode ? "var(--brand)" : "var(--border)",
+                  background: uploadMode ? "rgba(57,255,20,0.1)" : "transparent",
+                  color: uploadMode ? "var(--brand)" : "var(--text-muted)",
+                }}>
+                Upload PDF
+              </button>
             </div>
-            {error && <p className="text-xs mt-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,68,68,0.1)", color: "var(--danger)" }}>{error}</p>}
-            <p className="text-xs text-center mt-4" style={{ color: "var(--text-dim)" }}>
-              Works with SmartCredit, IdentityIQ, and most trimerge formats
-            </p>
+
+            {uploadMode && (
+              <div style={{
+                border: "2px dashed var(--border)", borderRadius: "12px",
+                padding: "32px 24px", textAlign: "center",
+              }}>
+                {uploading ? (
+                  <div>
+                    <div style={{ fontSize: "24px", marginBottom: "8px" }}>⏳</div>
+                    <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>Extracting data from PDF...</p>
+                  </div>
+                ) : uploadFile ? (
+                  <div>
+                    <div style={{ fontSize: "24px", marginBottom: "8px" }}>✅</div>
+                    <p style={{ fontSize: "13px", color: "var(--brand)", margin: "0 0 4px" }}>{uploadFile.name}</p>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>Data extracted — review and edit below</p>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: "32px", marginBottom: "8px" }}>📄</div>
+                    <p style={{ fontSize: "14px", fontWeight: "600", margin: "0 0 4px", color: "var(--text)" }}>
+                      Upload Credit Report
+                    </p>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 16px" }}>
+                      PDF or image — we'll extract the scores automatically
+                    </p>
+                    <label style={{
+                      display: "inline-block", padding: "10px 20px",
+                      background: "var(--brand)", color: "#000", borderRadius: "8px",
+                      fontSize: "13px", fontWeight: "600", cursor: "pointer",
+                    }}>
+                      Choose File
+                      <input type="file" accept=".pdf,image/*" onChange={handleUpload}
+                        style={{ display: "none" }} />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {inputMode === "form" && (
-          <div className="animate-fade-up">
-            <div className="flex items-center gap-1 mb-6">
-              {STEPS.map(function(s) {
-                return (
-                  <div key={s.id} className="flex items-center gap-1 flex-1">
-                    <div className="h-1.5 flex-1 rounded-full transition-all"
-                      style={{ background: step >= s.id ? "var(--brand)" : "var(--border)" }} />
-                  </div>
-                );
-              })}
+        {/* Step 1: Credit Scores */}
+        {step === 1 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
+              Bureau Scores
+            </h2>
+            <Field label="TransUnion Score" value={form.scoreTU}
+              onChange={function (v) { update("scoreTU", v); }}
+              placeholder="e.g. 680" type="number" />
+            <Field label="Experian Score" value={form.scoreEX}
+              onChange={function (v) { update("scoreEX", v); }}
+              placeholder="e.g. 695" type="number" />
+            <Field label="Equifax Score" value={form.scoreEQ}
+              onChange={function (v) { update("scoreEQ", v); }}
+              placeholder="e.g. 672" type="number" />
+          </div>
+        )}
+
+        {/* Step 2: Credit Profile */}
+        {step === 2 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
+              Credit Profile
+            </h2>
+            <Field label="Overall Utilization %" value={form.utilization}
+              onChange={function (v) { update("utilization", v); }}
+              placeholder="e.g. 28" type="number" />
+            <Field label="Number of Primary Accounts" value={form.primaryAccounts}
+              onChange={function (v) { update("primaryAccounts", v); }}
+              placeholder="e.g. 4" type="number" />
+            <Field label="Average Credit Age (years)" value={form.creditAge}
+              onChange={function (v) { update("creditAge", v); }}
+              placeholder="e.g. 3.5" type="number" />
+            <Field label="Late Payments (last 24 months)" value={form.latePayments}
+              onChange={function (v) { update("latePayments", v); }}
+              placeholder="0" type="number" />
+            <Field label="Negative Items" value={form.negativeItems}
+              onChange={function (v) { update("negativeItems", v); }}
+              placeholder="0" type="number" />
+            <Field label="Highest Card Limit ($)" value={form.highestLimit}
+              onChange={function (v) { update("highestLimit", v); }}
+              placeholder="e.g. 5000" type="number" />
+            <Field label="Inquiries per Bureau" value={form.inquiries}
+              onChange={function (v) { update("inquiries", v); }}
+              placeholder="e.g. 2" type="number" />
+            <div>
+              <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
+                Personal Info Correct on All Bureaus?
+              </label>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {["yes", "no"].map(function (opt) {
+                  return (
+                    <button key={opt} onClick={function () { update("personalInfo", opt); }}
+                      style={{
+                        flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
+                        fontWeight: "600", cursor: "pointer", border: "1.5px solid",
+                        textTransform: "capitalize",
+                        borderColor: form.personalInfo === opt ? "var(--brand)" : "var(--border)",
+                        background: form.personalInfo === opt ? "rgba(57,255,20,0.1)" : "transparent",
+                        color: form.personalInfo === opt ? "var(--brand)" : "var(--text-muted)",
+                      }}>
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
-              {"Step " + step + " of 4 · "}<span className="font-medium" style={{ color: "var(--text)" }}>{STEPS[step - 1].label}</span>
-            </p>
-
-            {step === 1 && (
-              <div className="space-y-3">
-                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Enter your client's contact information</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Client first name" value={form.firstName} onChange={function(v) { update("firstName", v); }} placeholder="John" />
-                  <Field label="Client last name" value={form.lastName} onChange={function(v) { update("lastName", v); }} placeholder="Doe" />
-                </div>
-                <Field label="Client email" type="email" value={form.email} onChange={function(v) { update("email", v); }} placeholder="john@email.com" />
-                <Field label="Client phone (optional)" type="tel" value={form.phone} onChange={function(v) { update("phone", v); }} placeholder="(555) 123-4567" />
+            <div>
+              <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
+                Report Errors Present?
+              </label>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {["yes", "no"].map(function (opt) {
+                  return (
+                    <button key={opt} onClick={function () { update("errors", opt); }}
+                      style={{
+                        flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
+                        fontWeight: "600", cursor: "pointer", border: "1.5px solid",
+                        textTransform: "capitalize",
+                        borderColor: form.errors === opt ? "var(--brand)" : "var(--border)",
+                        background: form.errors === opt ? "rgba(57,255,20,0.1)" : "transparent",
+                        color: form.errors === opt ? "var(--brand)" : "var(--text-muted)",
+                      }}>
+                      {opt}
+                    </button>
+                  );
+                })}
               </div>
-            )}
-
-            {step === 2 && (
-              <div className="space-y-3">
-                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Enter client's FICO 8 scores from each bureau</p>
-                <Field label="TransUnion" type="number" value={form.scoreTU} onChange={function(v) { update("scoreTU", v); }} placeholder="720" />
-                <Field label="Experian" type="number" value={form.scoreEX} onChange={function(v) { update("scoreEX", v); }} placeholder="715" />
-                <Field label="Equifax" type="number" value={form.scoreEQ} onChange={function(v) { update("scoreEQ", v); }} placeholder="710" />
-              </div>
-            )}
-
-            {step === 3 && (
-              <div className="space-y-3">
-                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>From the client's credit report</p>
-                <Field label="Highest utilization on any card (%)" type="number" value={form.utilization} onChange={function(v) { update("utilization", v); }} placeholder="25" />
-                <Field label="Number of open primary accounts" type="number" value={form.primaryAccounts} onChange={function(v) { update("primaryAccounts", v); }} placeholder="5" />
-                <Field label="Average credit age (years)" type="number" value={form.creditAge} onChange={function(v) { update("creditAge", v); }} placeholder="3" />
-                <Field label="Highest card limit ($)" type="number" value={form.highestLimit} onChange={function(v) { update("highestLimit", v); }} placeholder="15000" />
-                <Field label="Hard inquiries per bureau (last 24 mo)" type="number" value={form.inquiries} onChange={function(v) { update("inquiries", v); }} placeholder="2" />
-              </div>
-            )}
-
-            {step === 4 && (
-              <div className="space-y-3">
-                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Negative factors on the client's report</p>
-                <div>
-                  <label className="block text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>Is personal info correct across all bureaus?</label>
-                  <div className="flex gap-2">
-                    {["yes", "no"].map(function(v) {
-                      return (
-                        <button key={v} onClick={function() { update("personalInfo", v); }}
-                          className="flex-1 py-3 rounded-xl text-sm font-medium transition-all capitalize"
-                          style={{
-                            background: form.personalInfo === v ? "rgba(57,255,20,0.12)" : "var(--surface)",
-                            border: "1.5px solid " + (form.personalInfo === v ? "var(--brand)" : "var(--border)"),
-                            color: form.personalInfo === v ? "var(--brand)" : "var(--text-muted)",
-                          }}>
-                          {v}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <Field label="Reporting errors found" type="number" value={form.errors} onChange={function(v) { update("errors", v); }} placeholder="0" />
-                <Field label="Late payments in last 24 months" type="number" value={form.latePayments} onChange={function(v) { update("latePayments", v); }} placeholder="0" />
-                <Field label="Negative items (collections, charge-offs, etc.)" type="number" value={form.negativeItems} onChange={function(v) { update("negativeItems", v); }} placeholder="0" />
-              </div>
-            )}
-
-            {error && <p className="text-xs mt-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,68,68,0.1)", color: "var(--danger)" }}>{error}</p>}
-
-            <div className="flex gap-3 mt-8">
-              {step > 1 && (
-                <button onClick={function() { setStep(function(s) { return s - 1; }); }}
-                  className="px-5 py-3 rounded-xl text-sm font-medium"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                  Back
-                </button>
-              )}
-              {step < 4 ? (
-                <button onClick={function() { if (canNext()) setStep(function(s) { return s + 1; }); }} disabled={!canNext()}
-                  className="flex-1 py-3 rounded-xl text-sm font-semibold transition-all"
-                  style={{ background: canNext() ? "var(--brand)" : "var(--border)", color: canNext() ? "#000" : "var(--text-dim)" }}>
-                  Continue
-                </button>
-              ) : (
-                <button onClick={handleSubmit}
-                  className="flex-1 py-3 rounded-xl text-sm font-semibold transition-all"
-                  style={{ background: "var(--brand)", color: "#000", boxShadow: "0 0 20px rgba(57,255,20,0.2)" }}>
-                  Run AI analysis
-                </button>
-              )}
             </div>
           </div>
         )}
+
+        {/* Step 3: Contact Info */}
+        {step === 3 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
+              Client Contact Info
+            </h2>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              <Field label="First Name" value={form.firstName}
+                onChange={function (v) { update("firstName", v); }} placeholder="Marcus" />
+              <Field label="Last Name" value={form.lastName}
+                onChange={function (v) { update("lastName", v); }} placeholder="Johnson" />
+            </div>
+            <Field label="Email" value={form.email}
+              onChange={function (v) { update("email", v); }}
+              placeholder="marcus@email.com" type="email" />
+            <Field label="Phone" value={form.phone}
+              onChange={function (v) { update("phone", v); }}
+              placeholder="+1 (555) 000-0000" type="tel" />
+
+            {/* GHL sync preview */}
+            {tenant && tenant.ghl_enabled && (
+              <div style={{
+                marginTop: "8px", padding: "14px", borderRadius: "10px",
+                background: "rgba(57,255,20,0.06)", border: "1px solid rgba(57,255,20,0.2)",
+              }}>
+                <p style={{ fontSize: "12px", fontWeight: "600", color: "var(--brand)", margin: "0 0 4px" }}>
+                  ✓ GHL Sync Active
+                </p>
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>
+                  After analysis, this contact will be created/updated in {tenant.name}'s GHL account with credit scores, funding readiness, and tags.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Error message */}
+        {error && (
+          <div style={{
+            marginTop: "16px", padding: "12px 14px", borderRadius: "10px",
+            background: "rgba(255,68,68,0.1)", border: "1px solid rgba(255,68,68,0.3)",
+            color: "var(--danger)", fontSize: "13px",
+          }}>
+            {error}
+          </div>
+        )}
+
+        {/* Navigation buttons */}
+        <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
+          {step > 1 && (
+            <button onClick={prevStep}
+              style={{
+                flex: 1, padding: "14px", borderRadius: "12px", fontSize: "14px",
+                fontWeight: "600", cursor: "pointer",
+                background: "transparent", border: "1.5px solid var(--border)",
+                color: "var(--text-muted)",
+              }}>
+              Back
+            </button>
+          )}
+          {step < STEPS.length ? (
+            <button onClick={nextStep}
+              style={{
+                flex: 1, padding: "14px", borderRadius: "12px", fontSize: "14px",
+                fontWeight: "700", cursor: "pointer",
+                background: "var(--brand)", border: "none", color: "#000",
+              }}>
+              Continue →
+            </button>
+          ) : (
+            <button onClick={handleSubmit} disabled={loading}
+              style={{
+                flex: 1, padding: "14px", borderRadius: "12px", fontSize: "14px",
+                fontWeight: "700", cursor: loading ? "not-allowed" : "pointer",
+                background: loading ? "var(--border)" : "var(--brand)",
+                border: "none", color: loading ? "var(--text-muted)" : "#000",
+                opacity: loading ? 0.7 : 1,
+              }}>
+              {loading ? "Running Analysis..." : "Run AI Analysis →"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function Field(props) {
+function Field({ label, value, onChange, placeholder, type }) {
   return (
     <div>
-      <label className="block text-xs mb-1.5" style={{ color: "var(--text-muted)" }}>{props.label}</label>
+      <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
+        {label}
+      </label>
       <input
-        type={props.type || "text"} value={props.value} onChange={function(e) { props.onChange(e.target.value); }}
-        placeholder={props.placeholder}
-        className="w-full px-3.5 py-3 rounded-xl text-sm outline-none transition-colors"
-        style={{ background: "var(--surface)", border: "1.5px solid var(--border)", color: "var(--text)" }}
-        onFocus={function(e) { e.target.style.borderColor = "var(--brand)"; }}
-        onBlur={function(e) { e.target.style.borderColor = "var(--border)"; }}
+        type={type || "text"}
+        value={value}
+        onChange={function (e) { onChange(e.target.value); }}
+        placeholder={placeholder}
+        style={{
+          width: "100%", padding: "11px 14px", borderRadius: "10px",
+          background: "var(--bg)", border: "1.5px solid var(--border)",
+          color: "var(--text)", fontSize: "14px", outline: "none",
+          boxSizing: "border-box",
+        }}
+        onFocus={function (e) { e.target.style.borderColor = "var(--brand)"; }}
+        onBlur={function (e) { e.target.style.borderColor = "var(--border)"; }}
       />
     </div>
   );
