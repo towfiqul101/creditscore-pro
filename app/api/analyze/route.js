@@ -1,36 +1,55 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { analyzeCredit } from "@/lib/analysis";
-import { createAdminClient } from "@/lib/supabase-server";
+import { syncToGHL } from "@/lib/ghl";
+
+function createAdminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { persistSession: false } }
+  );
+}
 
 export async function POST(request) {
   try {
-    const body = await request.json();
-    const { formData, userId, tenantId } = body;
+    var body = await request.json();
+    var formData = body.formData;
+    var userId = body.userId || null;
+    var tenantId = body.tenantId || null;   // ← Comes from analysis form
 
-    // Step 1: Run local rule-based analysis
-    const analysis = analyzeCredit(formData);
+    if (!formData) {
+      return NextResponse.json({ success: false, error: "No form data provided" }, { status: 400 });
+    }
 
-    // Step 2: Enhance with Groq AI (free)
-    const aiEnhanced = await enhanceWithGroq(analysis, formData);
+    // Step 1: Run rule-based analysis
+    var baseAnalysis = analyzeCredit(formData);
 
-    // Step 3: Merge AI insights
-    const finalAnalysis = {
-      ...analysis,
-      results: analysis.results.map((r, i) => ({
-        ...r,
-        aiInsight: aiEnhanced.insights?.[i] || null,
-      })),
-      summary: aiEnhanced.summary || `Your funding readiness score is ${analysis.score}/10 (${analysis.percentage}%). Average FICO 8 is ${analysis.avgScore}.`,
-      priorityActions: aiEnhanced.priorityActions || analysis.results.filter(r => !r.passed).slice(0, 3).map(r => r.action),
+    // Step 2: Enhance with AI (Groq)
+    var aiEnhanced = await enhanceWithAI(baseAnalysis, formData);
+
+    var finalAnalysis = {
+      score: baseAnalysis.score,
+      total: baseAnalysis.total,
+      percentage: baseAnalysis.percentage,
+      avgScore: baseAnalysis.avgScore,
+      estimatedFunding: baseAnalysis.estimatedFunding,
+      bureauScores: baseAnalysis.bureauScores,
+      analyzedAt: baseAnalysis.analyzedAt,
+      results: baseAnalysis.results.map(function (r, i) {
+        return Object.assign({}, r, { aiNote: aiEnhanced.notes ? (aiEnhanced.notes[i] || null) : null });
+      }),
+      summary: aiEnhanced.summary || null,
+      priorityActions: aiEnhanced.priorityActions || [],
     };
 
-    // Step 4: Save to database
-    const supabase = createAdminClient();
-    const { data: savedAnalysis, error: dbError } = await supabase
+    // Step 3: Save to database
+    var supabase = createAdminClient();
+    var dbResult = await supabase
       .from("analyses")
       .insert({
         user_id: userId,
-        tenant_id: tenantId || null,
+        tenant_id: tenantId,
         contact_first_name: formData.firstName,
         contact_last_name: formData.lastName,
         contact_email: formData.email,
@@ -46,71 +65,126 @@ export async function POST(request) {
         summary: finalAnalysis.summary,
         priority_actions: finalAnalysis.priorityActions,
         input_data: formData,
+        ghl_synced: false,    // start false — update below if sync succeeds
+        ghl_contact_id: null,
       })
       .select()
       .single();
 
-    if (dbError) {
-      console.error("DB save error:", dbError);
-      return NextResponse.json({
-        success: true,
-        analysis: finalAnalysis,
-        id: null,
-        dbError: dbError.message,
-      });
+    if (dbResult.error) {
+      console.error("DB save error:", dbResult.error);
+    }
+
+    var savedAnalysisId = dbResult.data ? dbResult.data.id : null;
+
+    // Step 4: GHL sync — only if tenantId is present
+    if (tenantId) {
+      var tenantResult = await supabase
+        .from("tenants")
+        .select("ghl_api_key, ghl_location_id, ghl_enabled, name")
+        .eq("id", tenantId)
+        .single();
+
+      var tenant = tenantResult.data;
+
+      if (tenant && tenant.ghl_enabled && tenant.ghl_api_key && tenant.ghl_location_id) {
+        var ghlResult = await syncToGHL({
+          ghlApiKey: tenant.ghl_api_key,
+          locationId: tenant.ghl_location_id,
+          contactData: {
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            email: formData.email,
+            phone: formData.phone,
+          },
+          analysisResults: finalAnalysis,
+        });
+
+        finalAnalysis.ghlSync = ghlResult;
+
+        // Update the analysis record with sync status
+        if (savedAnalysisId) {
+          await supabase
+            .from("analyses")
+            .update({
+              ghl_synced: ghlResult.success === true,
+              ghl_contact_id: ghlResult.contactId || null,
+            })
+            .eq("id", savedAnalysisId);
+        }
+
+        if (!ghlResult.success) {
+          console.error("GHL sync failed:", ghlResult.error);
+          // Don't fail the whole request — analysis is saved, just log the GHL issue
+        }
+      } else if (tenant && !tenant.ghl_enabled) {
+        console.log("GHL sync skipped — disabled for tenant:", tenant.name);
+      } else if (!tenant) {
+        console.error("Tenant not found for id:", tenantId);
+      }
     }
 
     return NextResponse.json({
       success: true,
       analysis: finalAnalysis,
-      id: savedAnalysis?.id || null,
+      id: savedAnalysisId,
     });
+
   } catch (error) {
     console.error("Analysis error:", error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
 
-async function enhanceWithGroq(analysis, formData) {
+async function enhanceWithAI(analysis, formData) {
   try {
-    const prompt = `You are a credit analysis expert. A client has these results:
+    var prompt = "You are a credit analysis expert. A client has completed a credit analysis with these results:\n\n" +
+      "FICO Scores: TransUnion " + formData.scoreTU + ", Experian " + formData.scoreEX + ", Equifax " + formData.scoreEQ + "\n" +
+      "Utilization: " + formData.utilization + "%\n" +
+      "Primary Accounts: " + formData.primaryAccounts + "\n" +
+      "Credit Age: " + formData.creditAge + " years\n" +
+      "Late Payments (24mo): " + formData.latePayments + "\n" +
+      "Negative Items: " + formData.negativeItems + "\n" +
+      "Highest Card Limit: $" + formData.highestLimit + "\n" +
+      "Inquiries per Bureau: " + formData.inquiries + "\n" +
+      "Personal Info Correct: " + formData.personalInfo + "\n" +
+      "Report Errors: " + formData.errors + "\n\n" +
+      "Funding Readiness Score: " + analysis.score + "/10\n" +
+      "Estimated Funding: " + analysis.estimatedFunding + "\n\n" +
+      "Criteria results:\n" +
+      analysis.results.map(function (r) {
+        return (r.passed ? "PASS" : "FAIL") + ": " + r.label;
+      }).join("\n") +
+      "\n\nRespond ONLY with a JSON object (no markdown, no backticks) in this format:\n" +
+      '{"summary":"2-3 sentence overall assessment","priorityActions":["action 1","action 2","action 3"],"notes":["note for criterion 1","note for criterion 2","note for criterion 3","note for criterion 4","note for criterion 5","note for criterion 6","note for criterion 7","note for criterion 8","note for criterion 9","note for criterion 10"]}';
 
-FICO Scores: TransUnion ${formData.scoreTU}, Experian ${formData.scoreEX}, Equifax ${formData.scoreEQ}
-Utilization: ${formData.utilization}%, Primary Accounts: ${formData.primaryAccounts}
-Credit Age: ${formData.creditAge} years, Late Payments: ${formData.latePayments}
-Negative Items: ${formData.negativeItems}, Highest Limit: $${formData.highestLimit}
-Inquiries: ${formData.inquiries}, Personal Info Correct: ${formData.personalInfo}
-Errors: ${formData.errors}
-
-Funding Readiness: ${analysis.score}/10, Estimated Funding: ${analysis.estimatedFunding}
-
-Provide a JSON response with:
-1. "summary": 2-3 sentence personalized summary
-2. "priorityActions": top 3 actions as array of strings
-3. "insights": array of 10 brief insights (1 sentence each for each criteria)
-
-Respond ONLY with valid JSON, no markdown.`;
-
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    var response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
         "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.GROQ_API_KEY,
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
+        model: "llama-3.3-70b-versatile",
         messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
         max_tokens: 800,
-        temperature: 0.7,
+        temperature: 0.3,
       }),
     });
 
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content;
-    return JSON.parse(content);
-  } catch (error) {
-    console.error("Groq AI error:", error);
-    return { summary: null, priorityActions: [], insights: [] };
+    if (!response.ok) {
+      throw new Error("Groq API error: " + response.status);
+    }
+
+    var groqData = await response.json();
+    var text = groqData.choices[0].message.content.trim();
+
+    // Strip markdown fences if present
+    text = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
+
+    return JSON.parse(text);
+  } catch (err) {
+    console.error("AI enhancement error:", err);
+    return { summary: null, priorityActions: [], notes: [] };
   }
 }
