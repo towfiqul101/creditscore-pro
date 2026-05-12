@@ -39,8 +39,18 @@ export default function NewAnalysisPage() {
 
   async function loadUserAndTenant() {
     try {
+      // getUser() can fail on fresh accounts — fall back to getSession()
+      var u = null;
       var result = await supabase.auth.getUser();
-      var u = result.data.user;
+      if (result.data && result.data.user) {
+        u = result.data.user;
+      } else {
+        var sessionResult = await supabase.auth.getSession();
+        if (sessionResult.data && sessionResult.data.session) {
+          u = sessionResult.data.session.user;
+        }
+      }
+
       if (!u) { router.push("/login"); return; }
       setUser(u);
 
