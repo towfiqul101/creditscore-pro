@@ -2,43 +2,46 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 
 export async function middleware(request) {
-  let response = NextResponse.next({
+  var response = NextResponse.next({
     request: { headers: request.headers },
   });
 
-  const supabase = createServerClient(
+  var supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
-        getAll() {
+        getAll: function () {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            request.cookies.set(name, value)
-          );
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
+        setAll: function (cookiesToSet) {
+          cookiesToSet.forEach(function (item) {
+            request.cookies.set(item.name, item.value);
+          });
+          response = NextResponse.next({
+            request: { headers: request.headers },
+          });
+          cookiesToSet.forEach(function (item) {
+            response.cookies.set(item.name, item.value, item.options);
+          });
         },
       },
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // Refresh session — this is required to keep cookies alive
+  var userResult = await supabase.auth.getUser();
+  var user = userResult.data.user;
 
-  // Protected routes
-  if (!user && request.nextUrl.pathname.startsWith("/analysis")) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-  if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
+  var path = request.nextUrl.pathname;
+
+  // Redirect unauthenticated users away from protected pages
+  if (!user && (path.startsWith("/dashboard") || path.startsWith("/analysis"))) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
   // Redirect logged-in users away from login/signup
-  if (user && (request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/signup")) {
+  if (user && (path === "/login" || path === "/signup")) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
