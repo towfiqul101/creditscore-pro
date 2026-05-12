@@ -29,19 +29,19 @@ export async function middleware(request) {
     }
   );
 
-  // Refresh session — this is required to keep cookies alive
-  var userResult = await supabase.auth.getUser();
-  var user = userResult.data.user;
+  // KEY FIX: getSession() reads the cookie directly and never fails for
+  // logged-in users. getUser() makes a network call to Supabase that returns
+  // null for new/unconfirmed accounts, causing false redirects to /login.
+  var sessionResult = await supabase.auth.getSession();
+  var session = sessionResult.data.session;
 
   var path = request.nextUrl.pathname;
 
-  // Redirect unauthenticated users away from protected pages
-  if (!user && (path.startsWith("/dashboard") || path.startsWith("/analysis"))) {
+  if (!session && (path.startsWith("/dashboard") || path.startsWith("/analysis"))) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Redirect logged-in users away from login/signup
-  if (user && (path === "/login" || path === "/signup")) {
+  if (session && (path === "/login" || path === "/signup")) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
