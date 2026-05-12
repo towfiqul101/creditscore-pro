@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import Link from "next/link";
+import Link from "next/link";
 
 export default function LoginPage() {
   var [email, setEmail] = useState("");
@@ -98,7 +99,12 @@ export default function LoginPage() {
               }} />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>Password</label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+              <label style={{ fontSize: "12px", color: "var(--text-muted)" }}>Password</label>
+              <Link href="/forgot-password" style={{ fontSize: "12px", color: "var(--brand)", textDecoration: "none" }}>
+                Forgot password?
+              </Link>
+            </div>
             <input type="password" value={password} onChange={function(e) { setPassword(e.target.value); }}
               placeholder="Your password" required
               style={{
