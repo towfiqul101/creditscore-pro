@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import Link from "next/link";
-import Link from "next/link";
 
 export default function LoginPage() {
   var [email, setEmail] = useState("");
