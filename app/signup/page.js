@@ -43,12 +43,12 @@ export default function SignupPage() {
 
     if (loginResult.error) {
       // Signup worked but auto-login failed — send to login page
-      router.push("/login?message=Account created! Please sign in.");
+      window.location.href = "/login";
       return;
     }
 
     // Session established — go straight to dashboard
-    router.push("/dashboard");
+    window.location.href = "/dashboard";
   }
 
   async function handleGoogle() {
