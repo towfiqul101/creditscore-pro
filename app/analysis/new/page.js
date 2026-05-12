@@ -1,8 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
-import Link from "next/link";
+import { createBrowserClient } from "@supabase/ssr";
 
 var STEPS = [
   { id: 1, label: "Credit Scores" },
@@ -31,7 +30,11 @@ export default function NewAnalysisPage() {
   var [uploadFile, setUploadFile] = useState(null);
   var [uploading, setUploading] = useState(false);
   var router = useRouter();
-  var supabase = createClient();
+
+  var supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
 
   useEffect(function () {
     loadUserAndTenant();
@@ -39,36 +42,54 @@ export default function NewAnalysisPage() {
 
   async function loadUserAndTenant() {
     try {
-      // getUser() can fail on fresh accounts — fall back to getSession()
       var u = null;
-      var result = await supabase.auth.getUser();
-      if (result.data && result.data.user) {
-        u = result.data.user;
-      } else {
-        var sessionResult = await supabase.auth.getSession();
-        if (sessionResult.data && sessionResult.data.session) {
-          u = sessionResult.data.session.user;
+
+      // Try getUser (server-validated)
+      try {
+        var r1 = await supabase.auth.getUser();
+        if (r1.data && r1.data.user) {
+          u = r1.data.user;
+        }
+      } catch (e) {
+        console.log("getUser failed:", e.message);
+      }
+
+      // Fallback to getSession (reads local cookie)
+      if (!u) {
+        try {
+          var r2 = await supabase.auth.getSession();
+          if (r2.data && r2.data.session && r2.data.session.user) {
+            u = r2.data.session.user;
+          }
+        } catch (e) {
+          console.log("getSession failed:", e.message);
         }
       }
 
-      if (!u) { router.push("/login"); return; }
+      if (!u) {
+        router.push("/login");
+        return;
+      }
+
       setUser(u);
 
-      // Look up which tenant this user belongs to
-      // maybeSingle() returns null if no row found — won't throw
-      var memberResult = await supabase
-        .from("tenant_members")
-        .select("tenant_id, role, tenants(*)")
-        .eq("user_id", u.id)
-        .maybeSingle();
+      // Tenant lookup — maybeSingle never throws on empty result
+      try {
+        var memberResult = await supabase
+          .from("tenant_members")
+          .select("tenant_id, role, tenants(*)")
+          .eq("user_id", u.id)
+          .maybeSingle();
 
-      if (memberResult.data && memberResult.data.tenants) {
-        setTenant(memberResult.data.tenants);
+        if (memberResult.data && memberResult.data.tenants) {
+          setTenant(memberResult.data.tenants);
+        }
+      } catch (tenantErr) {
+        console.log("Tenant lookup failed (non-fatal):", tenantErr.message);
       }
-      // No tenant = fine, page loads normally, GHL sync just won't run
+
     } catch (err) {
-      // DO NOT redirect to login here — user is authenticated, just no tenant
-      console.error("Error loading tenant:", err);
+      console.error("Auth error:", err.message);
     } finally {
       setPageLoading(false);
     }
@@ -99,14 +120,11 @@ export default function NewAnalysisPage() {
     setUploadFile(file);
     setUploading(true);
     setError("");
-
     try {
-      var formData = new FormData();
-      formData.append("file", file);
-
-      var res = await fetch("/api/upload", { method: "POST", body: formData });
+      var fd = new FormData();
+      fd.append("file", file);
+      var res = await fetch("/api/upload", { method: "POST", body: fd });
       var data = await res.json();
-
       if (data.success && data.extractedData) {
         var d = data.extractedData;
         setForm(function (prev) {
@@ -125,16 +143,14 @@ export default function NewAnalysisPage() {
             negativeItems: d.negativeItems || prev.negativeItems,
             highestLimit: d.highestLimit || prev.highestLimit,
             inquiries: d.inquiries || prev.inquiries,
-            personalInfo: d.personalInfo || prev.personalInfo,
-            errors: d.errors || prev.errors,
           });
         });
         setUploadMode(false);
       } else {
-        setError(data.error || "Could not extract data from file. Please enter manually.");
+        setError(data.error || "Could not extract data. Please enter manually.");
       }
     } catch (err) {
-      setError("Upload failed. Please try again or enter manually.");
+      setError("Upload failed. Please enter manually.");
     } finally {
       setUploading(false);
     }
@@ -147,7 +163,6 @@ export default function NewAnalysisPage() {
     }
     setError("");
     setLoading(true);
-
     try {
       var res = await fetch("/api/analyze", {
         method: "POST",
@@ -155,12 +170,11 @@ export default function NewAnalysisPage() {
         body: JSON.stringify({
           formData: form,
           userId: user ? user.id : null,
-          tenantId: tenant ? tenant.id : null,   // ← KEY FIX: pass tenant
+          tenantId: tenant ? tenant.id : null,
         }),
       });
-
       var data = await res.json();
-      if (data.success) {
+      if (data.success && data.id) {
         router.push("/analysis/" + data.id + "?new=1");
       } else {
         setError(data.error || "Analysis failed. Please try again.");
@@ -174,21 +188,31 @@ export default function NewAnalysisPage() {
 
   if (pageLoading) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-deep)" }}>
-        <div style={{ color: "var(--text-muted)", fontSize: "14px" }}>Loading...</div>
+      <div style={{
+        minHeight: "100vh", display: "flex", alignItems: "center",
+        justifyContent: "center", background: "var(--bg-deep)",
+        flexDirection: "column", gap: "12px",
+      }}>
+        <div style={{
+          width: "32px", height: "32px", borderRadius: "50%",
+          border: "3px solid var(--border)", borderTopColor: "var(--brand)",
+          animation: "spin 0.8s linear infinite",
+        }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>Loading...</p>
       </div>
     );
   }
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-deep)", padding: "24px 16px" }}>
+
       {/* Header */}
       <div style={{ maxWidth: "560px", margin: "0 auto 24px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Link href="/dashboard" style={{ color: "var(--text-muted)", fontSize: "13px", textDecoration: "none" }}>
+          <a href="/dashboard" style={{ color: "var(--text-muted)", fontSize: "13px", textDecoration: "none" }}>
             ← Dashboard
-          </Link>
-          {/* GHL sync indicator */}
+          </a>
           {tenant && (
             <div style={{
               display: "flex", alignItems: "center", gap: "6px",
@@ -206,7 +230,6 @@ export default function NewAnalysisPage() {
             </div>
           )}
         </div>
-
         <h1 style={{ fontSize: "22px", fontWeight: "700", margin: "16px 0 4px", color: "var(--text)" }}>
           New Credit Analysis
         </h1>
@@ -245,65 +268,49 @@ export default function NewAnalysisPage() {
         background: "var(--bg-card)", borderRadius: "16px",
         border: "1px solid var(--border)", padding: "28px 24px",
       }}>
-        {/* PDF Upload toggle (step 1 only) */}
+
+        {/* PDF upload toggle — step 1 only */}
         {step === 1 && (
           <div style={{ marginBottom: "24px" }}>
             <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-              <button onClick={function () { setUploadMode(false); }}
-                style={{
-                  flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
-                  fontWeight: "600", cursor: "pointer", border: "1.5px solid",
-                  borderColor: !uploadMode ? "var(--brand)" : "var(--border)",
-                  background: !uploadMode ? "rgba(57,255,20,0.1)" : "transparent",
-                  color: !uploadMode ? "var(--brand)" : "var(--text-muted)",
-                }}>
-                Manual Entry
-              </button>
-              <button onClick={function () { setUploadMode(true); }}
-                style={{
-                  flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
-                  fontWeight: "600", cursor: "pointer", border: "1.5px solid",
-                  borderColor: uploadMode ? "var(--brand)" : "var(--border)",
-                  background: uploadMode ? "rgba(57,255,20,0.1)" : "transparent",
-                  color: uploadMode ? "var(--brand)" : "var(--text-muted)",
-                }}>
-                Upload PDF
-              </button>
+              {[{ key: false, label: "Manual Entry" }, { key: true, label: "Upload PDF" }].map(function (opt) {
+                return (
+                  <button key={String(opt.key)} onClick={function () { setUploadMode(opt.key); }}
+                    style={{
+                      flex: 1, padding: "10px", borderRadius: "10px", fontSize: "13px",
+                      fontWeight: "600", cursor: "pointer", border: "1.5px solid",
+                      borderColor: uploadMode === opt.key ? "var(--brand)" : "var(--border)",
+                      background: uploadMode === opt.key ? "rgba(57,255,20,0.1)" : "transparent",
+                      color: uploadMode === opt.key ? "var(--brand)" : "var(--text-muted)",
+                    }}>
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
-
             {uploadMode && (
               <div style={{
                 border: "2px dashed var(--border)", borderRadius: "12px",
-                padding: "32px 24px", textAlign: "center",
+                padding: "32px 24px", textAlign: "center", marginBottom: "20px",
               }}>
                 {uploading ? (
-                  <div>
-                    <div style={{ fontSize: "24px", marginBottom: "8px" }}>⏳</div>
-                    <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>Extracting data from PDF...</p>
-                  </div>
+                  <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>Extracting data...</p>
                 ) : uploadFile ? (
                   <div>
-                    <div style={{ fontSize: "24px", marginBottom: "8px" }}>✅</div>
                     <p style={{ fontSize: "13px", color: "var(--brand)", margin: "0 0 4px" }}>{uploadFile.name}</p>
-                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>Data extracted — review and edit below</p>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>Data extracted — review below</p>
                   </div>
                 ) : (
                   <div>
-                    <div style={{ fontSize: "32px", marginBottom: "8px" }}>📄</div>
-                    <p style={{ fontSize: "14px", fontWeight: "600", margin: "0 0 4px", color: "var(--text)" }}>
-                      Upload Credit Report
-                    </p>
-                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 16px" }}>
-                      PDF or image — we'll extract the scores automatically
-                    </p>
+                    <p style={{ fontSize: "14px", fontWeight: "600", margin: "0 0 4px", color: "var(--text)" }}>Upload Credit Report</p>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 16px" }}>PDF or image</p>
                     <label style={{
                       display: "inline-block", padding: "10px 20px",
                       background: "var(--brand)", color: "#000", borderRadius: "8px",
                       fontSize: "13px", fontWeight: "600", cursor: "pointer",
                     }}>
                       Choose File
-                      <input type="file" accept=".pdf,image/*" onChange={handleUpload}
-                        style={{ display: "none" }} />
+                      <input type="file" accept=".pdf,image/*" onChange={handleUpload} style={{ display: "none" }} />
                     </label>
                   </div>
                 )}
@@ -312,55 +319,30 @@ export default function NewAnalysisPage() {
           </div>
         )}
 
-        {/* Step 1: Credit Scores */}
+        {/* STEP 1: Bureau Scores */}
         {step === 1 && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
-              Bureau Scores
-            </h2>
-            <Field label="TransUnion Score" value={form.scoreTU}
-              onChange={function (v) { update("scoreTU", v); }}
-              placeholder="e.g. 680" type="number" />
-            <Field label="Experian Score" value={form.scoreEX}
-              onChange={function (v) { update("scoreEX", v); }}
-              placeholder="e.g. 695" type="number" />
-            <Field label="Equifax Score" value={form.scoreEQ}
-              onChange={function (v) { update("scoreEQ", v); }}
-              placeholder="e.g. 672" type="number" />
+            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>Bureau Scores</h2>
+            <Field label="TransUnion Score" value={form.scoreTU} onChange={function (v) { update("scoreTU", v); }} placeholder="e.g. 680" type="number" />
+            <Field label="Experian Score" value={form.scoreEX} onChange={function (v) { update("scoreEX", v); }} placeholder="e.g. 695" type="number" />
+            <Field label="Equifax Score" value={form.scoreEQ} onChange={function (v) { update("scoreEQ", v); }} placeholder="e.g. 672" type="number" />
           </div>
         )}
 
-        {/* Step 2: Credit Profile */}
+        {/* STEP 2: Credit Profile */}
         {step === 2 && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
-              Credit Profile
-            </h2>
-            <Field label="Overall Utilization %" value={form.utilization}
-              onChange={function (v) { update("utilization", v); }}
-              placeholder="e.g. 28" type="number" />
-            <Field label="Number of Primary Accounts" value={form.primaryAccounts}
-              onChange={function (v) { update("primaryAccounts", v); }}
-              placeholder="e.g. 4" type="number" />
-            <Field label="Average Credit Age (years)" value={form.creditAge}
-              onChange={function (v) { update("creditAge", v); }}
-              placeholder="e.g. 3.5" type="number" />
-            <Field label="Late Payments (last 24 months)" value={form.latePayments}
-              onChange={function (v) { update("latePayments", v); }}
-              placeholder="0" type="number" />
-            <Field label="Negative Items" value={form.negativeItems}
-              onChange={function (v) { update("negativeItems", v); }}
-              placeholder="0" type="number" />
-            <Field label="Highest Card Limit ($)" value={form.highestLimit}
-              onChange={function (v) { update("highestLimit", v); }}
-              placeholder="e.g. 5000" type="number" />
-            <Field label="Inquiries per Bureau" value={form.inquiries}
-              onChange={function (v) { update("inquiries", v); }}
-              placeholder="e.g. 2" type="number" />
+            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>Credit Profile</h2>
+            <Field label="Overall Utilization %" value={form.utilization} onChange={function (v) { update("utilization", v); }} placeholder="e.g. 28" type="number" />
+            <Field label="Number of Primary Accounts" value={form.primaryAccounts} onChange={function (v) { update("primaryAccounts", v); }} placeholder="e.g. 4" type="number" />
+            <Field label="Average Credit Age (years)" value={form.creditAge} onChange={function (v) { update("creditAge", v); }} placeholder="e.g. 3.5" type="number" />
+            <Field label="Late Payments (last 24 months)" value={form.latePayments} onChange={function (v) { update("latePayments", v); }} placeholder="0" type="number" />
+            <Field label="Negative Items" value={form.negativeItems} onChange={function (v) { update("negativeItems", v); }} placeholder="0" type="number" />
+            <Field label="Highest Card Limit ($)" value={form.highestLimit} onChange={function (v) { update("highestLimit", v); }} placeholder="e.g. 5000" type="number" />
+            <Field label="Inquiries per Bureau" value={form.inquiries} onChange={function (v) { update("inquiries", v); }} placeholder="e.g. 2" type="number" />
+
             <div>
-              <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
-                Personal Info Correct on All Bureaus?
-              </label>
+              <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>Personal Info Correct on All Bureaus?</label>
               <div style={{ display: "flex", gap: "8px" }}>
                 {["yes", "no"].map(function (opt) {
                   return (
@@ -379,10 +361,9 @@ export default function NewAnalysisPage() {
                 })}
               </div>
             </div>
+
             <div>
-              <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
-                Report Errors Present?
-              </label>
+              <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>Report Errors Present?</label>
               <div style={{ display: "flex", gap: "8px" }}>
                 {["yes", "no"].map(function (opt) {
                   return (
@@ -404,36 +385,25 @@ export default function NewAnalysisPage() {
           </div>
         )}
 
-        {/* Step 3: Contact Info */}
+        {/* STEP 3: Contact Info */}
         {step === 3 && (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
-              Client Contact Info
-            </h2>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>Client Contact Info</h2>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <Field label="First Name" value={form.firstName}
-                onChange={function (v) { update("firstName", v); }} placeholder="Marcus" />
-              <Field label="Last Name" value={form.lastName}
-                onChange={function (v) { update("lastName", v); }} placeholder="Johnson" />
+              <Field label="First Name" value={form.firstName} onChange={function (v) { update("firstName", v); }} placeholder="Marcus" />
+              <Field label="Last Name" value={form.lastName} onChange={function (v) { update("lastName", v); }} placeholder="Johnson" />
             </div>
-            <Field label="Email" value={form.email}
-              onChange={function (v) { update("email", v); }}
-              placeholder="marcus@email.com" type="email" />
-            <Field label="Phone" value={form.phone}
-              onChange={function (v) { update("phone", v); }}
-              placeholder="+1 (555) 000-0000" type="tel" />
+            <Field label="Email" value={form.email} onChange={function (v) { update("email", v); }} placeholder="marcus@email.com" type="email" />
+            <Field label="Phone" value={form.phone} onChange={function (v) { update("phone", v); }} placeholder="+1 (555) 000-0000" type="tel" />
 
-            {/* GHL sync preview */}
             {tenant && tenant.ghl_enabled && (
               <div style={{
                 marginTop: "8px", padding: "14px", borderRadius: "10px",
                 background: "rgba(57,255,20,0.06)", border: "1px solid rgba(57,255,20,0.2)",
               }}>
-                <p style={{ fontSize: "12px", fontWeight: "600", color: "var(--brand)", margin: "0 0 4px" }}>
-                  ✓ GHL Sync Active
-                </p>
+                <p style={{ fontSize: "12px", fontWeight: "600", color: "var(--brand)", margin: "0 0 4px" }}>GHL Sync Active</p>
                 <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>
-                  After analysis, this contact will be created/updated in {tenant.name}'s GHL account with credit scores, funding readiness, and tags.
+                  Contact will sync to {tenant.name} GHL after analysis.
                 </p>
               </div>
             )}
@@ -451,15 +421,14 @@ export default function NewAnalysisPage() {
           </div>
         )}
 
-        {/* Navigation buttons */}
+        {/* Navigation */}
         <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
           {step > 1 && (
             <button onClick={prevStep}
               style={{
                 flex: 1, padding: "14px", borderRadius: "12px", fontSize: "14px",
                 fontWeight: "600", cursor: "pointer",
-                background: "transparent", border: "1.5px solid var(--border)",
-                color: "var(--text-muted)",
+                background: "transparent", border: "1.5px solid var(--border)", color: "var(--text-muted)",
               }}>
               Back
             </button>
