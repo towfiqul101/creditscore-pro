@@ -45,17 +45,19 @@ export default function NewAnalysisPage() {
       setUser(u);
 
       // Look up which tenant this user belongs to
+      // maybeSingle() returns null if no row found — won't throw
       var memberResult = await supabase
         .from("tenant_members")
         .select("tenant_id, role, tenants(*)")
         .eq("user_id", u.id)
-        .single();
+        .maybeSingle();
 
       if (memberResult.data && memberResult.data.tenants) {
         setTenant(memberResult.data.tenants);
       }
-      // Note: if no tenant found, analyses still save — just without GHL sync
+      // No tenant = fine, page loads normally, GHL sync just won't run
     } catch (err) {
+      // DO NOT redirect to login here — user is authenticated, just no tenant
       console.error("Error loading tenant:", err);
     } finally {
       setPageLoading(false);
