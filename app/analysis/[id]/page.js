@@ -17,17 +17,29 @@ export default function AnalysisDetail() {
   useEffect(() => {
     async function load() {
       try {
+        // ── FIX: get the current user first ──
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+        if (userError || !user) {
+          router.push("/login");
+          return;
+        }
+
+        // ── FIX: filter by both id AND user_id — prevents accessing other users' analyses ──
         const { data, error: fetchError } = await supabase
           .from("analyses")
           .select("*")
           .eq("id", params.id)
+          .eq("user_id", user.id)
           .single();
 
         if (fetchError || !data) {
-          setError("Analysis not found: " + (fetchError?.message || "No data"));
+          // Either not found or belongs to another user — show same generic error
+          setError("Analysis not found or you don't have permission to view it.");
           setLoading(false);
           return;
         }
+
         setAnalysis(data);
         setLoading(false);
       } catch (err) {
