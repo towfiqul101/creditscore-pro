@@ -23,9 +23,11 @@ export default function Dashboard() {
     if (!u) { router.push("/login"); return; }
     setUser(u);
 
+    // ── FIX: filter by user_id so users only see their own analyses ──
     var response = await supabase
       .from("analyses")
       .select("*")
+      .eq("user_id", u.id)
       .order("created_at", { ascending: false })
       .limit(50);
 
