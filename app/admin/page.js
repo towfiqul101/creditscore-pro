@@ -127,9 +127,18 @@ export default function AdminPage() {
   }
 
   async function markUserPaid(userId) {
-    if (!window.confirm("Mark this user as paid? This will remove the 3-analysis limit.")) return;
-    await supabase.from("profiles").update({ plan: "paid", analyses_used: 0 }).eq("id", userId);
-    await loadData();
+    if (!window.confirm("Mark this user as paid? This will remove the 3-analysis limit and create their business account.")) return;
+    var res = await fetch("/api/admin/mark-paid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: userId }),
+    });
+    var data = await res.json();
+    if (data.success) {
+      await loadData();
+    } else {
+      alert("Error: " + (data.error || "Unknown error"));
+    }
   }
 
   async function revokeUserPaid(userId) {

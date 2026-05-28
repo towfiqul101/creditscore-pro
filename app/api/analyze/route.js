@@ -24,6 +24,38 @@ export async function POST(request) {
 
     var supabase = createAdminClient();
     var currentAnalysesUsed = 0;
+    var currentTenantAnalysesCount = 0;
+
+    // Tenant monthly limit check
+    if (tenantId) {
+      var tenantLimitCheck = await supabase
+        .from("tenants")
+        .select("analyses_this_month, month_reset_date, analysis_limit")
+        .eq("id", tenantId)
+        .single();
+
+      if (!tenantLimitCheck.error && tenantLimitCheck.data) {
+        var tl = tenantLimitCheck.data;
+        var tlNow = new Date();
+        var tlResetDate = tl.month_reset_date ? new Date(tl.month_reset_date) : null;
+
+        if (!tlResetDate || tlNow > tlResetDate) {
+          var tlNext = new Date(tlNow.getFullYear(), tlNow.getMonth() + 1, 1);
+          await supabase
+            .from("tenants")
+            .update({ analyses_this_month: 0, month_reset_date: tlNext.toISOString() })
+            .eq("id", tenantId);
+          tl.analyses_this_month = 0;
+        }
+
+        currentTenantAnalysesCount = tl.analyses_this_month || 0;
+        var tenantLimit = tl.analysis_limit || 300;
+
+        if (currentTenantAnalysesCount >= tenantLimit) {
+          return NextResponse.json({ success: false, error: "TENANT_LIMIT_REACHED" }, { status: 403 });
+        }
+      }
+    }
 
     // Free plan limit check
     if (userId) {
@@ -116,6 +148,14 @@ export async function POST(request) {
         .from("profiles")
         .update({ analyses_used: currentAnalysesUsed + 1 })
         .eq("id", userId);
+    }
+
+    // Increment tenant monthly counter
+    if (tenantId && savedAnalysisId) {
+      await supabase
+        .from("tenants")
+        .update({ analyses_this_month: currentTenantAnalysesCount + 1 })
+        .eq("id", tenantId);
     }
 
     // Step 4: GHL sync — only if tenantId is present

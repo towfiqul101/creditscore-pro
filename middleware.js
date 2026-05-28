@@ -54,6 +54,7 @@ export const config = {
     "/analysis/:path*",
     "/tenant/:path*",
     "/onboarding",
+    "/upgrade",
     "/login",
     "/signup",
     "/forgot-password",

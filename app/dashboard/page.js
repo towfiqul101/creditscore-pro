@@ -9,6 +9,7 @@ export default function Dashboard() {
   var [analyses, setAnalyses] = useState([]);
   var [stats, setStats] = useState({ total: 0, avgScore: 0, fundingReady: 0, thisMonth: 0 });
   var [profile, setProfile] = useState({ plan: "free", analyses_used: 0, company_name: null });
+  var [isTenantOwner, setIsTenantOwner] = useState(false);
   var [loading, setLoading] = useState(true);
   var [deleting, setDeleting] = useState(null);
   var router = useRouter();
@@ -37,6 +38,14 @@ export default function Dashboard() {
 
     var profileRes = await supabase.from("profiles").select("plan, analyses_used, company_name").eq("id", u.id).single();
     setProfile(profileRes.data || { plan: "free", analyses_used: 0, company_name: null });
+
+    var memberCheck = await supabase
+      .from("tenant_members")
+      .select("tenant_id")
+      .eq("user_id", u.id)
+      .eq("role", "owner")
+      .maybeSingle();
+    setIsTenantOwner(!!(memberCheck.data));
 
     var now = new Date();
     var thisMonth = list.filter(function(a) {
@@ -113,6 +122,21 @@ export default function Dashboard() {
           <button onClick={handleLogout} className="text-xs" style={{ color: "var(--text-muted)" }}>Sign out</button>
         </div>
       </header>
+
+      {isTenantOwner && (
+        <div style={{
+          padding: "10px 24px", display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+          background: "rgba(57,255,20,0.08)", borderBottom: "1px solid rgba(57,255,20,0.2)",
+        }}>
+          <span style={{ fontSize: "13px", color: "var(--brand)", fontWeight: "500" }}>
+            You have a Business Account
+          </span>
+          <a href="/tenant/dashboard" style={{
+            fontSize: "13px", fontWeight: "700", color: "var(--brand)", textDecoration: "none",
+          }}>→ Go to Business Dashboard</a>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto px-6 py-8">
         <div className="mb-8">
