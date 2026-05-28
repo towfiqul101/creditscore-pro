@@ -8,6 +8,7 @@ export default function Dashboard() {
   var [user, setUser] = useState(null);
   var [analyses, setAnalyses] = useState([]);
   var [stats, setStats] = useState({ total: 0, avgScore: 0, fundingReady: 0, thisMonth: 0 });
+  var [profile, setProfile] = useState({ plan: "free", analyses_used: 0, company_name: null });
   var [loading, setLoading] = useState(true);
   var [deleting, setDeleting] = useState(null);
   var router = useRouter();
@@ -33,6 +34,9 @@ export default function Dashboard() {
 
     var list = response.data || [];
     setAnalyses(list);
+
+    var profileRes = await supabase.from("profiles").select("plan, analyses_used, company_name").eq("id", u.id).single();
+    setProfile(profileRes.data || { plan: "free", analyses_used: 0, company_name: null });
 
     var now = new Date();
     var thisMonth = list.filter(function(a) {
@@ -136,6 +140,48 @@ export default function Dashboard() {
             );
           })}
         </div>
+
+        {/* Usage Banner */}
+        {(function() {
+          var isPaid = profile.plan === "paid";
+          var used = profile.analyses_used || 0;
+          var limit = isPaid ? 300 : 3;
+          var pct = Math.min((used / limit) * 100, 100);
+          var barColor = isPaid
+            ? (used >= 270 ? "var(--danger)" : used >= 240 ? "var(--warning)" : "var(--brand)")
+            : (used >= 3 ? "var(--danger)" : used >= 2 ? "var(--warning)" : "var(--brand)");
+          return (
+            <div style={{
+              marginBottom: "16px", padding: isPaid ? "12px 16px" : "16px",
+              borderRadius: "12px", border: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                <p style={{ fontSize: isPaid ? "12px" : "13px", fontWeight: "600", margin: 0, color: "var(--text)" }}>
+                  {isPaid
+                    ? "This month: " + used + " / 300 analyses"
+                    : "Free analyses: " + used + " / 3 used"}
+                </p>
+                {!isPaid && used >= 3 && (
+                  <a href="/upgrade" style={{
+                    padding: "5px 12px", borderRadius: "8px", fontSize: "12px",
+                    fontWeight: "700", textDecoration: "none",
+                    background: "var(--brand)", color: "#000",
+                  }}>Upgrade now →</a>
+                )}
+              </div>
+              <div style={{ height: "5px", borderRadius: "3px", background: "var(--border)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: pct + "%", borderRadius: "3px", background: barColor, transition: "width 0.4s" }} />
+              </div>
+              {!isPaid && used === 2 && (
+                <p style={{ fontSize: "11px", color: "var(--warning)", margin: "6px 0 0" }}>
+                  1 analysis remaining —{" "}
+                  <a href="/upgrade" style={{ color: "var(--warning)", fontWeight: "600" }}>Upgrade before you run out</a>
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
           <div className="px-4 py-3 flex items-center justify-between" style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>

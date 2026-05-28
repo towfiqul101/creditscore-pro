@@ -5,7 +5,6 @@ import { cookies } from "next/headers";
 export async function GET(request) {
   var url = new URL(request.url);
   var code = url.searchParams.get("code");
-  var next = url.searchParams.get("next") || "/dashboard";
 
   if (code) {
     var cookieStore = cookies();
@@ -26,7 +25,20 @@ export async function GET(request) {
 
     var result = await supabase.auth.exchangeCodeForSession(code);
     if (!result.error) {
-      return NextResponse.redirect(url.origin + next);
+      var user = result.data && result.data.session && result.data.session.user;
+      if (user) {
+        var profileRes = await supabase
+          .from("profiles")
+          .select("company_name")
+          .eq("id", user.id)
+          .single();
+
+        var hasCompany = profileRes.data && profileRes.data.company_name;
+        if (!hasCompany) {
+          return NextResponse.redirect(url.origin + "/onboarding");
+        }
+      }
+      return NextResponse.redirect(url.origin + "/dashboard");
     }
   }
 

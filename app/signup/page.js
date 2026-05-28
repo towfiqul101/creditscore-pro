@@ -2,15 +2,15 @@
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 export default function SignupPage() {
   var [email, setEmail] = useState("");
   var [password, setPassword] = useState("");
   var [fullName, setFullName] = useState("");
+  var [companyName, setCompanyName] = useState("");
+  var [whatsapp, setWhatsapp] = useState("");
   var [loading, setLoading] = useState(false);
   var [error, setError] = useState("");
-  var router = useRouter();
 
   var supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -25,7 +25,13 @@ export default function SignupPage() {
     var result = await supabase.auth.signUp({
       email: email,
       password: password,
-      options: { data: { full_name: fullName } },
+      options: {
+        data: {
+          full_name: fullName,
+          company_name: companyName,
+          whatsapp: whatsapp,
+        },
+      },
     });
 
     if (result.error) {
@@ -34,20 +40,16 @@ export default function SignupPage() {
       return;
     }
 
-    // Email confirmation is OFF — user has a session immediately after signup
-    // Sign them in explicitly to make sure the cookie is set
     var loginResult = await supabase.auth.signInWithPassword({
       email: email,
       password: password,
     });
 
     if (loginResult.error) {
-      // Signup worked but auto-login failed — send to login page
       window.location.href = "/login";
       return;
     }
 
-    // Session established — go straight to dashboard
     window.location.href = "/dashboard";
   }
 
@@ -58,6 +60,13 @@ export default function SignupPage() {
     });
     if (result.error) setError(result.error.message);
   }
+
+  var inputStyle = {
+    width: "100%", padding: "11px 14px", borderRadius: "10px",
+    background: "var(--bg-card)", border: "1.5px solid var(--border)",
+    color: "var(--text)", fontSize: "14px", outline: "none",
+    boxSizing: "border-box",
+  };
 
   return (
     <div style={{
@@ -119,14 +128,10 @@ export default function SignupPage() {
               onChange={function(e) { setFullName(e.target.value); }}
               placeholder="Your name"
               required
-              style={{
-                width: "100%", padding: "11px 14px", borderRadius: "10px",
-                background: "var(--bg-card)", border: "1.5px solid var(--border)",
-                color: "var(--text)", fontSize: "14px", outline: "none",
-                boxSizing: "border-box",
-              }}
+              style={inputStyle}
             />
           </div>
+
           <div>
             <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
               Email
@@ -137,14 +142,10 @@ export default function SignupPage() {
               onChange={function(e) { setEmail(e.target.value); }}
               placeholder="you@email.com"
               required
-              style={{
-                width: "100%", padding: "11px 14px", borderRadius: "10px",
-                background: "var(--bg-card)", border: "1.5px solid var(--border)",
-                color: "var(--text)", fontSize: "14px", outline: "none",
-                boxSizing: "border-box",
-              }}
+              style={inputStyle}
             />
           </div>
+
           <div>
             <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
               Password
@@ -156,13 +157,38 @@ export default function SignupPage() {
               placeholder="At least 6 characters"
               required
               minLength={6}
-              style={{
-                width: "100%", padding: "11px 14px", borderRadius: "10px",
-                background: "var(--bg-card)", border: "1.5px solid var(--border)",
-                color: "var(--text)", fontSize: "14px", outline: "none",
-                boxSizing: "border-box",
-              }}
+              style={inputStyle}
             />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
+              Company / Organization Name
+            </label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={function(e) { setCompanyName(e.target.value); }}
+              placeholder="Elite Credit Repair LLC"
+              required
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "var(--text-muted)" }}>
+              WhatsApp Number
+            </label>
+            <input
+              type="tel"
+              value={whatsapp}
+              onChange={function(e) { setWhatsapp(e.target.value); }}
+              placeholder="+1 (555) 000-0000"
+              style={inputStyle}
+            />
+            <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "5px 0 0" }}>
+              Optional — for quick support from our team
+            </p>
           </div>
 
           {error && (

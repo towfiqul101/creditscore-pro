@@ -174,6 +174,10 @@ export default function NewAnalysisPage() {
         }),
       });
       var data = await res.json();
+      if (!data.success && data.error === "LIMIT_REACHED") {
+        window.location.href = "/upgrade";
+        return;
+      }
       if (data.success && data.id) {
         router.push("/analysis/" + data.id + "?new=1");
       } else {

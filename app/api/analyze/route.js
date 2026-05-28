@@ -16,10 +16,44 @@ export async function POST(request) {
     var body = await request.json();
     var formData = body.formData;
     var userId = body.userId || null;
-    var tenantId = body.tenantId || null;   // ← Comes from analysis form
+    var tenantId = body.tenantId || null;
 
     if (!formData) {
       return NextResponse.json({ success: false, error: "No form data provided" }, { status: 400 });
+    }
+
+    var supabase = createAdminClient();
+    var currentAnalysesUsed = 0;
+
+    // Free plan limit check
+    if (userId) {
+      var profileCheck = await supabase
+        .from("profiles")
+        .select("plan, analyses_used, analyses_reset_date")
+        .eq("id", userId)
+        .single();
+
+      if (!profileCheck.error && profileCheck.data) {
+        var prof = profileCheck.data;
+        var now = new Date();
+        var resetDate = prof.analyses_reset_date ? new Date(prof.analyses_reset_date) : null;
+
+        if (!resetDate || now > resetDate) {
+          var nextReset = new Date(now);
+          nextReset.setMonth(nextReset.getMonth() + 1);
+          await supabase
+            .from("profiles")
+            .update({ analyses_used: 0, analyses_reset_date: nextReset.toISOString() })
+            .eq("id", userId);
+          prof.analyses_used = 0;
+        }
+
+        currentAnalysesUsed = prof.analyses_used || 0;
+
+        if (prof.plan === "free" && currentAnalysesUsed >= 3) {
+          return NextResponse.json({ success: false, error: "LIMIT_REACHED" }, { status: 403 });
+        }
+      }
     }
 
     // Step 1: Run rule-based analysis
@@ -44,7 +78,6 @@ export async function POST(request) {
     };
 
     // Step 3: Save to database
-    var supabase = createAdminClient();
     var dbResult = await supabase
       .from("analyses")
       .insert({
@@ -65,7 +98,7 @@ export async function POST(request) {
         summary: finalAnalysis.summary,
         priority_actions: finalAnalysis.priorityActions,
         input_data: formData,
-        ghl_synced: false,    // start false — update below if sync succeeds
+        ghl_synced: false,
         ghl_contact_id: null,
       })
       .select()
@@ -76,6 +109,14 @@ export async function POST(request) {
     }
 
     var savedAnalysisId = dbResult.data ? dbResult.data.id : null;
+
+    // Increment analyses_used after successful save
+    if (userId && savedAnalysisId) {
+      await supabase
+        .from("profiles")
+        .update({ analyses_used: currentAnalysesUsed + 1 })
+        .eq("id", userId);
+    }
 
     // Step 4: GHL sync — only if tenantId is present
     if (tenantId) {
@@ -102,7 +143,6 @@ export async function POST(request) {
 
         finalAnalysis.ghlSync = ghlResult;
 
-        // Update the analysis record with sync status
         if (savedAnalysisId) {
           await supabase
             .from("analyses")
@@ -115,7 +155,6 @@ export async function POST(request) {
 
         if (!ghlResult.success) {
           console.error("GHL sync failed:", ghlResult.error);
-          // Don't fail the whole request — analysis is saved, just log the GHL issue
         }
       } else if (tenant && !tenant.ghl_enabled) {
         console.log("GHL sync skipped — disabled for tenant:", tenant.name);
@@ -179,7 +218,6 @@ async function enhanceWithAI(analysis, formData) {
     var groqData = await response.json();
     var text = groqData.choices[0].message.content.trim();
 
-    // Strip markdown fences if present
     text = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
 
     return JSON.parse(text);

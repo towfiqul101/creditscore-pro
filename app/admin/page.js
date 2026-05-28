@@ -58,7 +58,7 @@ export default function AdminPage() {
     // Load all auth users via profiles
     var profilesRes = await supabase
       .from("profiles")
-      .select("id, full_name, role, created_at");
+      .select("id, full_name, role, plan, company_name, created_at");
     setAllUsers(profilesRes.data || []);
 
     setLoading(false);
@@ -123,6 +123,18 @@ export default function AdminPage() {
   async function handleDeleteTenant(id, name) {
     if (!window.confirm("Delete tenant " + name + "? This cannot be undone.")) return;
     await supabase.from("tenants").delete().eq("id", id);
+    await loadData();
+  }
+
+  async function markUserPaid(userId) {
+    if (!window.confirm("Mark this user as paid? This will remove the 3-analysis limit.")) return;
+    await supabase.from("profiles").update({ plan: "paid", analyses_used: 0 }).eq("id", userId);
+    await loadData();
+  }
+
+  async function revokeUserPaid(userId) {
+    if (!window.confirm("Revoke paid status? They will return to free plan with 3-analysis limit.")) return;
+    await supabase.from("profiles").update({ plan: "free" }).eq("id", userId);
     await loadData();
   }
 
@@ -224,7 +236,7 @@ export default function AdminPage() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                    {["Name", "Role", "Analyses", "Joined"].map(function (h) {
+                    {["Name", "Role", "Plan", "Analyses", "Joined", "Actions"].map(function (h) {
                       return (
                         <th key={h} style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", color: "var(--text-dim)", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                           {h}
@@ -251,11 +263,37 @@ export default function AdminPage() {
                             color: u.role === "admin" ? "var(--brand)" : "var(--text-muted)",
                           }}>{u.role || "user"}</span>
                         </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{
+                            padding: "3px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "600",
+                            background: u.plan === "paid" ? "rgba(57,255,20,0.15)" : "rgba(255,255,255,0.06)",
+                            color: u.plan === "paid" ? "var(--brand)" : "var(--text-muted)",
+                          }}>{u.plan === "paid" ? "Paid" : "Free"}</span>
+                        </td>
                         <td style={{ padding: "12px 16px", fontSize: "13px", color: "var(--text)", fontWeight: "600" }}>
                           {userAnalyses.length}
                         </td>
                         <td style={{ padding: "12px 16px", fontSize: "12px", color: "var(--text-muted)" }}>
                           {new Date(u.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          {u.plan === "paid" ? (
+                            <button onClick={function() { revokeUserPaid(u.id); }}
+                              style={{
+                                padding: "5px 10px", borderRadius: "6px", fontSize: "11px",
+                                fontWeight: "600", cursor: "pointer",
+                                background: "transparent", color: "var(--danger)",
+                                border: "1px solid rgba(255,68,68,0.4)",
+                              }}>Revoke</button>
+                          ) : (
+                            <button onClick={function() { markUserPaid(u.id); }}
+                              style={{
+                                padding: "5px 10px", borderRadius: "6px", fontSize: "11px",
+                                fontWeight: "600", cursor: "pointer",
+                                background: "transparent", color: "var(--brand)",
+                                border: "1px solid rgba(57,255,20,0.4)",
+                              }}>Mark Paid</button>
+                          )}
                         </td>
                       </tr>
                     );

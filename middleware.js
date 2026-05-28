@@ -29,15 +29,15 @@ export async function middleware(request) {
     }
   );
 
-  // KEY FIX: getSession() reads the cookie directly and never fails for
-  // logged-in users. getUser() makes a network call to Supabase that returns
-  // null for new/unconfirmed accounts, causing false redirects to /login.
   var sessionResult = await supabase.auth.getSession();
   var session = sessionResult.data.session;
 
   var path = request.nextUrl.pathname;
 
-  if (!session && (path.startsWith("/dashboard") || path.startsWith("/analysis"))) {
+  var protectedPaths = path.startsWith("/dashboard") || path.startsWith("/analysis") ||
+    path.startsWith("/tenant") || path === "/onboarding";
+
+  if (!session && protectedPaths) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
@@ -49,5 +49,14 @@ export async function middleware(request) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/analysis/:path*", "/login", "/signup", "/forgot-password", "/reset-password"],
+  matcher: [
+    "/dashboard/:path*",
+    "/analysis/:path*",
+    "/tenant/:path*",
+    "/onboarding",
+    "/login",
+    "/signup",
+    "/forgot-password",
+    "/reset-password",
+  ],
 };
