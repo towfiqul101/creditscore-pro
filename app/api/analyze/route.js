@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { analyzeCredit } from "@/lib/analysis";
-import { syncToGHL, sendAnalysisResults } from "@/lib/ghl";
+import { syncToGHL } from "@/lib/ghl";
 
 function createAdminClient() {
   return createClient(
@@ -202,41 +202,42 @@ export async function POST(request) {
         console.error("Tenant not found for id:", tenantId);
       }
 
-      // Step 5: Send results to client via GHL (SMS + Email)
+      // Step 5: Queue notification (sent by cron based on tenant delay setting)
       if (savedAnalysisId && ghlResult && ghlResult.success && ghlResult.contactId) {
-        var notifResult = await supabase
+        var notifTenantRes = await supabase
           .from("tenants")
-          .select("send_results_sms, send_results_email, results_sms_template, results_email_subject, brand_name, ghl_api_key, ghl_location_id")
+          .select("send_results_sms, send_results_email, results_sms_template, results_email_subject, notification_delay_minutes, brand_name")
           .eq("id", tenantId)
           .single();
 
-        var notifTenant = notifResult.data;
+        var notifTenant = notifTenantRes.data;
 
-        if (notifTenant && (notifTenant.send_results_sms || notifTenant.send_results_email)) {
+        if (notifTenant && (notifTenant.send_results_sms || notifTenant.send_results_email) && notifTenant.notification_delay_minutes !== -1) {
+          var delayMinutes = notifTenant.notification_delay_minutes || 0;
+          var scheduledFor = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
           var appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://creditscore-pro.vercel.app";
-          var analysisUrl = appUrl + "/results/" + savedAnalysisId;
+          var resultsUrl = appUrl + "/results/" + savedAnalysisId;
 
-          var sendResult = await sendAnalysisResults({
-            ghlApiKey: notifTenant.ghl_api_key,
-            locationId: notifTenant.ghl_location_id,
-            contactId: ghlResult.contactId,
-            contactData: {
-              firstName: formData.firstName,
-              lastName: formData.lastName,
-              email: formData.email,
-              phone: formData.phone,
-            },
-            analysisUrl: analysisUrl,
-            analysisResults: finalAnalysis,
-            sendSms: notifTenant.send_results_sms,
-            sendEmail: notifTenant.send_results_email,
-            smsTemplate: notifTenant.results_sms_template,
-            emailSubject: notifTenant.results_email_subject,
-            brandName: notifTenant.brand_name,
+          await supabase.from("notification_queue").insert({
+            analysis_id: savedAnalysisId,
+            tenant_id: tenantId,
+            contact_id: ghlResult.contactId,
+            contact_first_name: formData.firstName,
+            contact_last_name: formData.lastName,
+            contact_email: formData.email,
+            contact_phone: formData.phone,
+            results_url: resultsUrl,
+            funding_score: finalAnalysis.score,
+            estimated_funding: finalAnalysis.estimatedFunding,
+            send_sms: notifTenant.send_results_sms,
+            send_email: notifTenant.send_results_email,
+            sms_template: notifTenant.results_sms_template,
+            email_subject: notifTenant.results_email_subject,
+            scheduled_for: scheduledFor,
+            status: "pending",
           });
 
-          console.log("Results notification sent:", sendResult);
-          finalAnalysis.notificationResult = sendResult;
+          console.log("Notification queued for:", scheduledFor, "(delay:", delayMinutes, "min)");
         }
       }
     }

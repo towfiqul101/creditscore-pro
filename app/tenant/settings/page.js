@@ -12,7 +12,9 @@ export default function TenantSettingsPage() {
   var [businessForm, setBusinessForm] = useState({ name: "", ceo_name: "", owner_email: "", owner_phone: "", owner_whatsapp: "", website: "" });
   var [brandingForm, setBrandingForm] = useState({ brand_name: "", logo_url: "", brand_color: "#39FF14" });
   var [ghlForm, setGhlForm] = useState({ ghl_api_key: "", ghl_location_id: "", ghl_enabled: false });
-  var [notifForm, setNotifForm] = useState({ send_results_sms: true, send_results_email: true, results_sms_template: "", results_email_subject: "" });
+  var [notifForm, setNotifForm] = useState({ send_results_sms: true, send_results_email: true, results_sms_template: "", results_email_subject: "", notification_delay_minutes: 0 });
+  var [queueItems, setQueueItems] = useState([]);
+  var [queueLoading, setQueueLoading] = useState(false);
 
   // Save states
   var [savingProfile, setSavingProfile] = useState(false);
@@ -88,9 +90,11 @@ export default function TenantSettingsPage() {
       send_results_email: t.send_results_email !== false,
       results_sms_template: t.results_sms_template || "Hi [firstName]! Your credit analysis is ready. Score: [score]/10. View your full report: [url]",
       results_email_subject: t.results_email_subject || "Your Credit Analysis Results Are Ready",
+      notification_delay_minutes: (t.notification_delay_minutes !== null && t.notification_delay_minutes !== undefined) ? t.notification_delay_minutes : 0,
     });
 
     setLoading(false);
+    loadQueue(t.id);
   }
 
   function updateProfile(k, v) { setProfileForm(function(prev) { return Object.assign({}, prev, { [k]: v }); }); }
@@ -160,9 +164,26 @@ export default function TenantSettingsPage() {
       send_results_email: notifForm.send_results_email,
       results_sms_template: notifForm.results_sms_template || null,
       results_email_subject: notifForm.results_email_subject || null,
+      notification_delay_minutes: notifForm.notification_delay_minutes,
     }).eq("id", tenant.id);
     setSavingNotif(false);
     flashSaved(setSavedNotif);
+  }
+
+  async function loadQueue(tenantId) {
+    setQueueLoading(true);
+    try {
+      var res = await supabase
+        .from("notification_queue")
+        .select("id, contact_first_name, contact_last_name, send_sms, send_email, status, scheduled_for, sent_at, last_error, created_at")
+        .eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      setQueueItems(res.data || []);
+    } catch (err) {
+      setQueueItems([]);
+    }
+    setQueueLoading(false);
   }
 
   async function testGhl() {
@@ -588,6 +609,46 @@ export default function TenantSettingsPage() {
           )}
 
           <div style={fieldGap}>
+            {/* Send delay */}
+            <div>
+              <label style={labelStyle}>When to send notifications</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" }}>
+                {[
+                  { value: 0, label: "Immediately (as soon as analysis completes)" },
+                  { value: 5, label: "After 5 minutes" },
+                  { value: 60, label: "After 1 hour" },
+                  { value: 360, label: "After 6 hours" },
+                  { value: 1440, label: "After 24 hours" },
+                  { value: -1, label: "Manual only (don't send automatically)" },
+                ].map(function(opt) {
+                  var selected = notifForm.notification_delay_minutes === opt.value;
+                  return (
+                    <div
+                      key={opt.value}
+                      onClick={function() { updateNotif("notification_delay_minutes", opt.value); }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "10px",
+                        padding: "9px 12px", borderRadius: "9px", cursor: "pointer",
+                        background: selected ? "rgba(57,255,20,0.08)" : "var(--surface)",
+                        border: "1.5px solid " + (selected ? "rgba(57,255,20,0.4)" : "var(--border)"),
+                        transition: "border-color 0.15s, background 0.15s",
+                      }}
+                    >
+                      <div style={{
+                        width: "16px", height: "16px", borderRadius: "50%", flexShrink: 0,
+                        border: "2px solid " + (selected ? "var(--brand)" : "var(--border)"),
+                        background: selected ? "var(--brand)" : "transparent",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        {selected && <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#000" }} />}
+                      </div>
+                      <span style={{ fontSize: "13px", color: selected ? "var(--text)" : "var(--text-muted)", fontWeight: selected ? "600" : "400" }}>{opt.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* SMS toggle */}
             <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
               <div
@@ -687,6 +748,61 @@ export default function TenantSettingsPage() {
             </div>
 
             <SaveBtn onClick={saveNotif} saving={savingNotif} saved={savedNotif} />
+
+            {/* Queue status panel */}
+            <div style={{ marginTop: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+                <p style={{ fontSize: "12px", fontWeight: "600", color: "var(--text-muted)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>Recent Notifications (last 10)</p>
+                <button
+                  onClick={function() { if (tenant) loadQueue(tenant.id); }}
+                  style={{ background: "none", border: "none", fontSize: "12px", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
+                >Refresh</button>
+              </div>
+              {queueLoading ? (
+                <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>Loading...</p>
+              ) : queueItems.length === 0 ? (
+                <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>No notifications sent yet.</p>
+              ) : (
+                <div style={{ borderRadius: "10px", border: "1px solid var(--border)", overflow: "hidden" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr",
+                    gap: "6px", padding: "8px 12px",
+                    background: "var(--surface)", borderBottom: "1px solid var(--border)",
+                  }}>
+                    {["Client", "Type", "Status", "Scheduled"].map(function(h) {
+                      return <span key={h} style={{ fontSize: "10px", fontWeight: "600", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</span>;
+                    })}
+                  </div>
+                  {queueItems.map(function(q) {
+                    var name = ((q.contact_first_name || "") + " " + (q.contact_last_name || "")).trim() || "Unknown";
+                    var type = (q.send_sms && q.send_email) ? "SMS+Email" : q.send_sms ? "SMS" : "Email";
+                    var scheduled = q.status === "sent" && q.sent_at
+                      ? new Date(q.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                      : q.scheduled_for
+                      ? new Date(q.scheduled_for).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                      : "—";
+                    var statusColor = q.status === "sent" ? "var(--brand)" : q.status === "failed" ? "var(--danger)" : "#FFA500";
+                    var statusBg = q.status === "sent" ? "rgba(57,255,20,0.1)" : q.status === "failed" ? "rgba(255,68,68,0.1)" : "rgba(255,165,0,0.1)";
+                    return (
+                      <div key={q.id} style={{
+                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr",
+                        gap: "6px", padding: "9px 12px", alignItems: "center",
+                        borderBottom: "1px solid var(--border)", background: "var(--bg-card)",
+                      }}>
+                        <span style={{ fontSize: "12px", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{type}</span>
+                        <span style={{
+                          display: "inline-block", padding: "2px 7px", borderRadius: "5px",
+                          fontSize: "10px", fontWeight: "700", background: statusBg, color: statusColor,
+                          textTransform: "capitalize",
+                        }}>{q.status}</span>
+                        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{scheduled}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </section>
 

@@ -44,14 +44,36 @@ export async function POST(request) {
       }
     );
 
-    if (res.ok) {
-      return NextResponse.json({ success: true, message: "Connected successfully" });
-    } else if (res.status === 401) {
-      return NextResponse.json({ success: false, error: "Invalid API key" });
-    } else if (res.status === 403) {
-      return NextResponse.json({ success: false, error: "Missing permissions — check integration scopes" });
+    if (!res.ok) {
+      if (res.status === 401) {
+        return NextResponse.json({ success: false, error: "Invalid API key" });
+      } else if (res.status === 403) {
+        return NextResponse.json({ success: false, error: "Missing permissions — check integration scopes" });
+      } else {
+        return NextResponse.json({ success: false, error: "Connection failed (status " + res.status + ")" });
+      }
+    }
+
+    // Also test Conversations scope
+    var convRes = await fetch(
+      "https://services.leadconnectorhq.com/conversations/search?locationId=" + locationId + "&limit=1",
+      {
+        method: "GET",
+        headers: {
+          "Authorization": "Bearer " + apiKey,
+          "Version": "2021-07-28",
+        },
+      }
+    );
+
+    if (convRes.ok) {
+      return NextResponse.json({ success: true, message: "Connected — Contacts ✓ Conversations ✓" });
     } else {
-      return NextResponse.json({ success: false, error: "Connection failed (status " + res.status + ")" });
+      return NextResponse.json({
+        success: true,
+        partial: true,
+        message: "Contacts ✓ but Conversations ✗ — enable Conversations scope in your GHL integration for SMS/email sending",
+      });
     }
   } catch (err) {
     console.error("test-ghl error:", err);

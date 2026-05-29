@@ -10,6 +10,7 @@ export default function TenantDashboardPage() {
   var [loading, setLoading] = useState(true);
   var [search, setSearch] = useState("");
   var [copiedId, setCopiedId] = useState(null);
+  var [sendModal, setSendModal] = useState({ open: false, analysis: null, sendSms: true, sendEmail: true, sending: false, result: null });
 
   var supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -41,7 +42,7 @@ export default function TenantDashboardPage() {
 
     var analysesRes = await supabase
       .from("analyses")
-      .select("id, contact_first_name, contact_last_name, contact_email, contact_phone, funding_score, funding_percentage, estimated_funding, score_avg, ghl_synced, created_at")
+      .select("id, contact_first_name, contact_last_name, contact_email, contact_phone, funding_score, funding_percentage, estimated_funding, score_avg, ghl_synced, ghl_contact_id, created_at")
       .eq("tenant_id", t.id)
       .order("created_at", { ascending: false })
       .limit(50);
@@ -64,6 +65,30 @@ export default function TenantDashboardPage() {
       setCopiedId(id);
       setTimeout(function() { setCopiedId(null); }, 2000);
     });
+  }
+
+  function openSendModal(a) {
+    setSendModal({ open: true, analysis: a, sendSms: true, sendEmail: true, sending: false, result: null });
+  }
+
+  function closeSendModal() {
+    setSendModal({ open: false, analysis: null, sendSms: true, sendEmail: true, sending: false, result: null });
+  }
+
+  async function handleSendNow() {
+    var modal = sendModal;
+    setSendModal(function(prev) { return Object.assign({}, prev, { sending: true, result: null }); });
+    try {
+      var res = await fetch("/api/tenant/send-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisId: modal.analysis.id, sendSms: modal.sendSms, sendEmail: modal.sendEmail }),
+      });
+      var data = await res.json();
+      setSendModal(function(prev) { return Object.assign({}, prev, { sending: false, result: data }); });
+    } catch (err) {
+      setSendModal(function(prev) { return Object.assign({}, prev, { sending: false, result: { success: false, error: err.message } }); });
+    }
   }
 
   async function handleLogout() {
@@ -241,7 +266,7 @@ export default function TenantDashboardPage() {
         {/* Table */}
         <div style={{ borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
           <div style={{
-            display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1fr",
+            display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1.4fr",
             gap: "8px", padding: "10px 16px",
             background: "var(--bg-card)", borderBottom: "1px solid var(--border)",
           }}>
@@ -274,7 +299,7 @@ export default function TenantDashboardPage() {
                 var date = new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
                 return (
                   <div key={a.id} style={{
-                    display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1fr",
+                    display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1.4fr",
                     gap: "8px", padding: "12px 16px", alignItems: "center",
                     borderBottom: "1px solid var(--border)",
                   }}>
@@ -290,7 +315,7 @@ export default function TenantDashboardPage() {
                       color: a.ghl_synced ? "var(--brand)" : "var(--text-dim)",
                     }}>{a.ghl_synced ? "Synced" : "Pending"}</span>
                     <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{date}</span>
-                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
                       <a href={"/analysis/" + a.id} style={{
                         display: "inline-block", padding: "5px 10px", borderRadius: "6px",
                         fontSize: "11px", fontWeight: "600", textDecoration: "none",
@@ -309,6 +334,16 @@ export default function TenantDashboardPage() {
                         }}>
                         {copiedId === a.id ? "✓" : "📋"}
                       </button>
+                      {tenant.ghl_enabled && a.ghl_contact_id && (
+                        <button
+                          onClick={function() { openSendModal(a); }}
+                          title="Send results to client"
+                          style={{
+                            padding: "5px 8px", borderRadius: "6px", fontSize: "11px",
+                            border: "1px solid var(--border)", cursor: "pointer",
+                            background: "var(--bg)", color: "var(--text-muted)",
+                          }}>Send</button>
+                      )}
                     </div>
                   </div>
                 );
@@ -317,6 +352,101 @@ export default function TenantDashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Send Now Modal */}
+      {sendModal.open && sendModal.analysis && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 100,
+          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
+        }} onClick={function(e) { if (e.target === e.currentTarget && !sendModal.sending) closeSendModal(); }}>
+          <div style={{
+            background: "var(--bg-card)", border: "1px solid var(--border)",
+            borderRadius: "16px", padding: "28px 28px 24px", maxWidth: "380px", width: "100%",
+            boxShadow: "0 8px 40px rgba(0,0,0,0.4)",
+          }}>
+            <h3 style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)", margin: "0 0 4px" }}>Send results to client?</h3>
+            <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: "0 0 20px" }}>
+              {((sendModal.analysis.contact_first_name || "") + " " + (sendModal.analysis.contact_last_name || "")).trim() || "Unknown"}
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
+              {sendModal.analysis.contact_phone && (
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={sendModal.sendSms}
+                    onChange={function(e) { setSendModal(function(prev) { return Object.assign({}, prev, { sendSms: e.target.checked }); }); }}
+                    disabled={sendModal.sending}
+                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }}
+                  />
+                  <span style={{ fontSize: "13px", color: "var(--text)" }}>SMS to {sendModal.analysis.contact_phone}</span>
+                </label>
+              )}
+              {sendModal.analysis.contact_email && (
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={sendModal.sendEmail}
+                    onChange={function(e) { setSendModal(function(prev) { return Object.assign({}, prev, { sendEmail: e.target.checked }); }); }}
+                    disabled={sendModal.sending}
+                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }}
+                  />
+                  <span style={{ fontSize: "13px", color: "var(--text)" }}>Email to {sendModal.analysis.contact_email}</span>
+                </label>
+              )}
+            </div>
+
+            {sendModal.result && (
+              <div style={{
+                padding: "10px 12px", borderRadius: "8px", marginBottom: "16px",
+                background: sendModal.result.success ? "rgba(57,255,20,0.08)" : "rgba(255,68,68,0.08)",
+                border: "1px solid " + (sendModal.result.success ? "rgba(57,255,20,0.3)" : "rgba(255,68,68,0.3)"),
+                fontSize: "13px",
+                color: sendModal.result.success ? "var(--brand)" : "var(--danger)",
+              }}>
+                {sendModal.result.success
+                  ? "✓ Sent — SMS: " + (sendModal.result.smsSent ? "delivered" : "skipped") + ", Email: " + (sendModal.result.emailSent ? "delivered" : "skipped")
+                  : "✗ " + (sendModal.result.error || "Failed")}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "10px" }}>
+              {!sendModal.result ? (
+                <>
+                  <button
+                    onClick={handleSendNow}
+                    disabled={sendModal.sending || (!sendModal.sendSms && !sendModal.sendEmail)}
+                    style={{
+                      flex: 1, padding: "10px 16px", borderRadius: "9px", fontSize: "13px", fontWeight: "700",
+                      border: "none", cursor: (sendModal.sending || (!sendModal.sendSms && !sendModal.sendEmail)) ? "not-allowed" : "pointer",
+                      background: sendModal.sending ? "var(--border)" : "var(--brand)",
+                      color: sendModal.sending ? "var(--text-muted)" : "#000",
+                    }}>
+                    {sendModal.sending ? "Sending..." : "Send Now"}
+                  </button>
+                  <button
+                    onClick={closeSendModal}
+                    disabled={sendModal.sending}
+                    style={{
+                      padding: "10px 16px", borderRadius: "9px", fontSize: "13px",
+                      border: "1px solid var(--border)", cursor: "pointer",
+                      background: "transparent", color: "var(--text-muted)",
+                    }}>Cancel</button>
+                </>
+              ) : (
+                <button
+                  onClick={closeSendModal}
+                  style={{
+                    flex: 1, padding: "10px 16px", borderRadius: "9px", fontSize: "13px", fontWeight: "600",
+                    border: "1px solid var(--border)", cursor: "pointer",
+                    background: "transparent", color: "var(--text)",
+                  }}>Close</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
