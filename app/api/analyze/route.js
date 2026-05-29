@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { analyzeCredit } from "@/lib/analysis";
-import { syncToGHL } from "@/lib/ghl";
+import { syncToGHL, sendAnalysisResults } from "@/lib/ghl";
 
 function createAdminClient() {
   return createClient(
@@ -200,6 +200,44 @@ export async function POST(request) {
         console.log("GHL sync skipped — disabled for tenant:", tenant.name);
       } else if (!tenant) {
         console.error("Tenant not found for id:", tenantId);
+      }
+
+      // Step 5: Send results to client via GHL (SMS + Email)
+      if (savedAnalysisId && ghlResult && ghlResult.success && ghlResult.contactId) {
+        var notifResult = await supabase
+          .from("tenants")
+          .select("send_results_sms, send_results_email, results_sms_template, results_email_subject, brand_name, ghl_api_key, ghl_location_id")
+          .eq("id", tenantId)
+          .single();
+
+        var notifTenant = notifResult.data;
+
+        if (notifTenant && (notifTenant.send_results_sms || notifTenant.send_results_email)) {
+          var appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://creditscore-pro.vercel.app";
+          var analysisUrl = appUrl + "/results/" + savedAnalysisId;
+
+          var sendResult = await sendAnalysisResults({
+            ghlApiKey: notifTenant.ghl_api_key,
+            locationId: notifTenant.ghl_location_id,
+            contactId: ghlResult.contactId,
+            contactData: {
+              firstName: formData.firstName,
+              lastName: formData.lastName,
+              email: formData.email,
+              phone: formData.phone,
+            },
+            analysisUrl: analysisUrl,
+            analysisResults: finalAnalysis,
+            sendSms: notifTenant.send_results_sms,
+            sendEmail: notifTenant.send_results_email,
+            smsTemplate: notifTenant.results_sms_template,
+            emailSubject: notifTenant.results_email_subject,
+            brandName: notifTenant.brand_name,
+          });
+
+          console.log("Results notification sent:", sendResult);
+          finalAnalysis.notificationResult = sendResult;
+        }
       }
     }
 

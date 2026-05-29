@@ -9,6 +9,7 @@ export default function TenantDashboardPage() {
   var [thisMonthCount, setThisMonthCount] = useState(0);
   var [loading, setLoading] = useState(true);
   var [search, setSearch] = useState("");
+  var [copiedId, setCopiedId] = useState(null);
 
   var supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -55,6 +56,14 @@ export default function TenantDashboardPage() {
     setThisMonthCount(countRes.count || 0);
 
     setLoading(false);
+  }
+
+  function handleCopyRowLink(id) {
+    var url = window.location.origin + "/results/" + id;
+    navigator.clipboard.writeText(url).then(function() {
+      setCopiedId(id);
+      setTimeout(function() { setCopiedId(null); }, 2000);
+    });
   }
 
   async function handleLogout() {
@@ -232,7 +241,7 @@ export default function TenantDashboardPage() {
         {/* Table */}
         <div style={{ borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
           <div style={{
-            display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 0.7fr",
+            display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1fr",
             gap: "8px", padding: "10px 16px",
             background: "var(--bg-card)", borderBottom: "1px solid var(--border)",
           }}>
@@ -265,7 +274,7 @@ export default function TenantDashboardPage() {
                 var date = new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
                 return (
                   <div key={a.id} style={{
-                    display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 0.7fr",
+                    display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1fr",
                     gap: "8px", padding: "12px 16px", alignItems: "center",
                     borderBottom: "1px solid var(--border)",
                   }}>
@@ -281,12 +290,26 @@ export default function TenantDashboardPage() {
                       color: a.ghl_synced ? "var(--brand)" : "var(--text-dim)",
                     }}>{a.ghl_synced ? "Synced" : "Pending"}</span>
                     <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{date}</span>
-                    <a href={"/analysis/" + a.id} style={{
-                      display: "inline-block", padding: "5px 10px", borderRadius: "6px",
-                      fontSize: "11px", fontWeight: "600", textDecoration: "none",
-                      background: "rgba(57,255,20,0.1)", color: "var(--brand)",
-                      border: "1px solid rgba(57,255,20,0.2)",
-                    }}>View</a>
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <a href={"/analysis/" + a.id} style={{
+                        display: "inline-block", padding: "5px 10px", borderRadius: "6px",
+                        fontSize: "11px", fontWeight: "600", textDecoration: "none",
+                        background: "rgba(57,255,20,0.1)", color: "var(--brand)",
+                        border: "1px solid rgba(57,255,20,0.2)",
+                      }}>View</a>
+                      <button
+                        onClick={function() { handleCopyRowLink(a.id); }}
+                        title="Copy results link"
+                        style={{
+                          padding: "5px 8px", borderRadius: "6px", fontSize: "11px",
+                          border: "1px solid var(--border)", cursor: "pointer",
+                          background: copiedId === a.id ? "rgba(57,255,20,0.15)" : "var(--bg)",
+                          color: copiedId === a.id ? "var(--brand)" : "var(--text-muted)",
+                          transition: "background 0.15s, color 0.15s",
+                        }}>
+                        {copiedId === a.id ? "✓" : "📋"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}

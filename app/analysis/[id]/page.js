@@ -10,6 +10,7 @@ export default function AnalysisDetail() {
   const [error, setError] = useState(null);
   const [expandedCriteria, setExpandedCriteria] = useState(null);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
+  const [copied, setCopied] = useState(false);
   const router = useRouter();
   const params = useParams();
   const supabase = createClient();
@@ -49,6 +50,14 @@ export default function AnalysisDetail() {
     }
     if (params.id) load();
   }, [params.id]);
+
+  function handleCopyLink() {
+    var url = window.location.origin + "/results/" + params.id;
+    navigator.clipboard.writeText(url).then(function() {
+      setCopied(true);
+      setTimeout(function() { setCopied(false); }, 2000);
+    });
+  }
 
   const handleDownloadPDF = async () => {
     setDownloadingPDF(true);
@@ -114,6 +123,11 @@ export default function AnalysisDetail() {
           <span className="text-sm font-semibold">CreditScore Pro</span>
         </Link>
         <div className="flex items-center gap-3">
+          <button onClick={handleCopyLink}
+            className="px-4 py-2 rounded-lg text-xs font-medium transition-all"
+            style={{ border: "1px solid var(--border)", color: copied ? "var(--brand)" : "var(--text-muted)" }}>
+            {copied ? "✓ Copied!" : "📋 Copy Results Link"}
+          </button>
           <button onClick={handleDownloadPDF} disabled={downloadingPDF}
             className="px-4 py-2 rounded-lg text-xs font-medium transition-all"
             style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
