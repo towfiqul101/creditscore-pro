@@ -136,6 +136,46 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
+-- ─── PHASE 4c ADDITIONS ─────────────────────────────────────────────
+
+-- notification_steps: per-tenant drip campaign steps (up to 3 per tenant)
+CREATE TABLE IF NOT EXISTS notification_steps (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+  step_order INT NOT NULL,
+  enabled BOOLEAN DEFAULT TRUE,
+  delay_days INT DEFAULT 0,
+  delay_hours INT DEFAULT 0,
+  delay_minutes INT DEFAULT 0,
+  send_sms BOOLEAN DEFAULT FALSE,
+  send_email BOOLEAN DEFAULT TRUE,
+  email_type TEXT DEFAULT 'full_results',
+  email_subject TEXT,
+  email_intro TEXT,
+  email_body TEXT,
+  cta_enabled BOOLEAN DEFAULT FALSE,
+  cta_text TEXT,
+  cta_url TEXT,
+  sms_template TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(tenant_id, step_order)
+);
+
+ALTER TABLE notification_steps ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Tenant owners can manage steps" ON notification_steps
+  USING (tenant_id IN (SELECT tenant_id FROM tenant_members WHERE user_id = auth.uid() AND role = 'owner'));
+
+-- New columns on notification_queue for step-level config
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS step_id UUID REFERENCES notification_steps(id);
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS step_order INT DEFAULT 1;
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS email_type TEXT DEFAULT 'full_results';
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS email_intro TEXT;
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS email_body TEXT;
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS cta_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS cta_text TEXT;
+ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS cta_url TEXT;
+
 -- ═══════════════════════════════════════════════════════════════════
 -- DONE! Your database is ready.
 -- Next: Go to Authentication → URL Configuration in Supabase

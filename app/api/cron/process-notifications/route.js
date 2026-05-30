@@ -21,7 +21,11 @@ export async function GET(request) {
 
   var queueRes = await supabase
     .from("notification_queue")
-    .select("*, tenants(ghl_api_key, ghl_location_id, ghl_enabled, brand_name, brand_color, logo_url, owner_email, website, ceo_name)")
+    .select(
+      "*, " +
+      "tenants(ghl_api_key, ghl_location_id, ghl_enabled, brand_name, brand_color, logo_url, owner_email, website, ceo_name), " +
+      "analyses(funding_score, score_avg, estimated_funding, score_tu, score_ex, score_eq, results, summary, priority_actions)"
+    )
     .eq("status", "pending")
     .lte("scheduled_for", now)
     .lt("attempts", 3)
@@ -33,6 +37,7 @@ export async function GET(request) {
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
     var tenant = item.tenants;
+    var analysis = item.analyses;
 
     await supabase
       .from("notification_queue")
@@ -43,6 +48,27 @@ export async function GET(request) {
       if (!tenant || !tenant.ghl_enabled || !tenant.ghl_api_key) {
         throw new Error("GHL not configured for tenant");
       }
+
+      var analysisData = analysis
+        ? {
+            score: analysis.funding_score,
+            avgScore: analysis.score_avg,
+            estimatedFunding: analysis.estimated_funding,
+            bureauScores: {
+              TransUnion: analysis.score_tu,
+              Experian: analysis.score_ex,
+              Equifax: analysis.score_eq,
+            },
+            results: analysis.results || [],
+            priorityActions: analysis.priority_actions || [],
+          }
+        : {
+            score: item.funding_score,
+            estimatedFunding: item.estimated_funding,
+            bureauScores: {},
+            results: [],
+            priorityActions: [],
+          };
 
       var sendResult = await sendAnalysisResults({
         ghlApiKey: tenant.ghl_api_key,
@@ -55,13 +81,10 @@ export async function GET(request) {
           phone: item.contact_phone,
         },
         analysisUrl: item.results_url,
-        analysisResults: {
-          score: item.funding_score,
-          estimatedFunding: item.estimated_funding,
-        },
+        analysisData: analysisData,
         sendSms: item.send_sms,
         sendEmail: item.send_email,
-        smsTemplate: item.sms_template,
+        emailType: item.email_type || "full_results",
         emailSubject: item.email_subject,
         tenantBranding: {
           brand_name: tenant.brand_name,
@@ -70,6 +93,14 @@ export async function GET(request) {
           owner_email: tenant.owner_email,
           website: tenant.website,
           ceo_name: tenant.ceo_name,
+        },
+        stepConfig: {
+          email_intro: item.email_intro,
+          email_body: item.email_body,
+          cta_enabled: item.cta_enabled,
+          cta_text: item.cta_text,
+          cta_url: item.cta_url,
+          sms_template: item.sms_template,
         },
       });
 

@@ -202,25 +202,35 @@ export async function POST(request) {
         console.error("Tenant not found for id:", tenantId);
       }
 
-      // Step 5: Queue notification (sent by cron based on tenant delay setting)
+      // Step 5: Queue notification steps (drip campaign)
       if (savedAnalysisId && ghlResult && ghlResult.success && ghlResult.contactId) {
-        var notifTenantRes = await supabase
-          .from("tenants")
-          .select("send_results_sms, send_results_email, results_sms_template, results_email_subject, notification_delay_minutes, brand_name")
-          .eq("id", tenantId)
-          .single();
+        var appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://creditscore-pro.vercel.app";
+        var resultsUrl = appUrl + "/results/" + savedAnalysisId;
+        var now = Date.now();
 
-        var notifTenant = notifTenantRes.data;
+        var stepsRes = await supabase
+          .from("notification_steps")
+          .select("*")
+          .eq("tenant_id", tenantId)
+          .eq("enabled", true)
+          .order("step_order", { ascending: true });
 
-        if (notifTenant && (notifTenant.send_results_sms || notifTenant.send_results_email) && notifTenant.notification_delay_minutes !== -1) {
-          var delayMinutes = notifTenant.notification_delay_minutes || 0;
-          var scheduledFor = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
-          var appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://creditscore-pro.vercel.app";
-          var resultsUrl = appUrl + "/results/" + savedAnalysisId;
+        var steps = stepsRes.data || [];
+
+        for (var s = 0; s < steps.length; s++) {
+          var step = steps[s];
+          var delayMs = (
+            ((step.delay_days || 0) * 1440) +
+            ((step.delay_hours || 0) * 60) +
+            (step.delay_minutes || 0)
+          ) * 60 * 1000;
+          var scheduledFor = new Date(now + delayMs).toISOString();
 
           await supabase.from("notification_queue").insert({
             analysis_id: savedAnalysisId,
             tenant_id: tenantId,
+            step_id: step.id,
+            step_order: step.step_order,
             contact_id: ghlResult.contactId,
             contact_first_name: formData.firstName,
             contact_last_name: formData.lastName,
@@ -229,15 +239,21 @@ export async function POST(request) {
             results_url: resultsUrl,
             funding_score: finalAnalysis.score,
             estimated_funding: finalAnalysis.estimatedFunding,
-            send_sms: notifTenant.send_results_sms,
-            send_email: notifTenant.send_results_email,
-            sms_template: notifTenant.results_sms_template,
-            email_subject: notifTenant.results_email_subject,
+            send_sms: step.send_sms,
+            send_email: step.send_email,
+            email_type: step.email_type || "full_results",
+            email_subject: step.email_subject,
+            email_intro: step.email_intro,
+            email_body: step.email_body,
+            cta_enabled: step.cta_enabled,
+            cta_text: step.cta_text,
+            cta_url: step.cta_url,
+            sms_template: step.sms_template,
             scheduled_for: scheduledFor,
             status: "pending",
           });
 
-          console.log("Notification queued for:", scheduledFor, "(delay:", delayMinutes, "min)");
+          console.log("Queued step", step.step_order, "for:", scheduledFor);
         }
       }
     }
