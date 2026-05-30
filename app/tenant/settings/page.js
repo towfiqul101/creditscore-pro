@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 
 export default function TenantSettingsPage() {
@@ -13,11 +13,8 @@ export default function TenantSettingsPage() {
   var [brandingForm, setBrandingForm] = useState({ brand_name: "", logo_url: "", brand_color: "#39FF14" });
   var [ghlForm, setGhlForm] = useState({ ghl_api_key: "", ghl_location_id: "", ghl_enabled: false });
   var [steps, setSteps] = useState([]);
-  var [savingStep, setSavingStep] = useState({});
-  var [savedStep, setSavedStep] = useState({});
-  var [deletingStep, setDeletingStep] = useState({});
-  var [previewLoading, setPreviewLoading] = useState({});
-  var [previewModal, setPreviewModal] = useState(null);
+  var [savingSteps, setSavingSteps] = useState(false);
+  var [stepsSaved, setStepsSaved] = useState(false);
   var [queueItems, setQueueItems] = useState([]);
   var [queueLoading, setQueueLoading] = useState(false);
 
@@ -39,8 +36,6 @@ export default function TenantSettingsPage() {
 
   // Logo error
   var [logoError, setLogoError] = useState(false);
-
-  var smsRefs = useRef({});
 
   var supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -160,131 +155,74 @@ export default function TenantSettingsPage() {
     setSteps(res.data || []);
   }
 
-  function updateStep(stepOrder, k, v) {
+  function addStep(stepNum) {
+    var newStep = {
+      tenant_id: tenant.id,
+      step_order: stepNum,
+      delay_days: stepNum === 1 ? 0 : stepNum === 2 ? 1 : 3,
+      delay_hours: 0,
+      delay_minutes: 0,
+      send_sms: true,
+      send_email: true,
+      email_type: stepNum === 1 ? "full_results" : "custom",
+      email_subject: "",
+      email_intro: "",
+      email_body: "",
+      cta_enabled: true,
+      cta_text: "Book a Free Consultation",
+      cta_url: "",
+      sms_template: "",
+      is_active: true,
+    };
+    setSteps(function(prev) { return prev.concat([newStep]); });
+  }
+
+  function updateStep(stepNum, updated) {
     setSteps(function(prev) {
       return prev.map(function(s) {
-        return s.step_order === stepOrder ? Object.assign({}, s, { [k]: v }) : s;
+        return s.step_order === stepNum ? Object.assign({}, s, updated) : s;
       });
     });
   }
 
-  function addStep(stepOrder) {
-    setSteps(function(prev) {
-      return prev.concat([{
-        id: null,
-        tenant_id: tenant.id,
-        step_order: stepOrder,
-        enabled: true,
-        delay_days: 0,
-        delay_hours: stepOrder === 1 ? 0 : 24,
-        delay_minutes: 0,
-        send_sms: false,
-        send_email: true,
-        email_type: stepOrder === 1 ? "full_results" : "custom",
-        email_subject: stepOrder === 1 ? "Your Credit Analysis Report Is Ready" : "Following up on your credit analysis",
-        email_intro: "",
-        email_body: "",
-        cta_enabled: false,
-        cta_text: "Book a Free Consultation",
-        cta_url: "",
-        sms_template: "",
-      }]);
-    });
+  function deleteStep(stepNum) {
+    setSteps(function(prev) { return prev.filter(function(s) { return s.step_order !== stepNum; }); });
   }
 
-  async function saveStep(step) {
-    setSavingStep(function(prev) { return Object.assign({}, prev, { [step.step_order]: true }); });
-    var upsertData = {
-      tenant_id: tenant.id,
-      step_order: step.step_order,
-      enabled: step.enabled,
-      delay_days: step.delay_days || 0,
-      delay_hours: step.delay_hours || 0,
-      delay_minutes: step.delay_minutes || 0,
-      send_sms: step.send_sms || false,
-      send_email: step.send_email !== false,
-      email_type: step.email_type || "full_results",
-      email_subject: step.email_subject || null,
-      email_intro: step.email_intro || null,
-      email_body: step.email_body || null,
-      cta_enabled: step.cta_enabled || false,
-      cta_text: step.cta_text || null,
-      cta_url: step.cta_url || null,
-      sms_template: step.sms_template || null,
-      updated_at: new Date().toISOString(),
-    };
-
-    var res;
-    if (step.id) {
-      res = await supabase.from("notification_steps").update(upsertData).eq("id", step.id).select().single();
-    } else {
-      res = await supabase.from("notification_steps").insert(upsertData).select().single();
-    }
-
-    if (res.data) {
-      setSteps(function(prev) {
-        return prev.map(function(s) {
-          return s.step_order === step.step_order ? res.data : s;
-        });
-      });
-    }
-
-    setSavingStep(function(prev) { return Object.assign({}, prev, { [step.step_order]: false }); });
-    setSavedStep(function(prev) { return Object.assign({}, prev, { [step.step_order]: true }); });
-    setTimeout(function() {
-      setSavedStep(function(prev) { return Object.assign({}, prev, { [step.step_order]: false }); });
-    }, 2500);
-  }
-
-  async function deleteStep(step) {
-    setDeletingStep(function(prev) { return Object.assign({}, prev, { [step.step_order]: true }); });
-    if (step.id) {
-      await supabase.from("notification_steps").delete().eq("id", step.id);
-    }
-    setSteps(function(prev) { return prev.filter(function(s) { return s.step_order !== step.step_order; }); });
-    setDeletingStep(function(prev) { return Object.assign({}, prev, { [step.step_order]: false }); });
-  }
-
-  async function previewStep(step) {
-    setPreviewLoading(function(prev) { return Object.assign({}, prev, { [step.step_order]: true }); });
+  async function saveSteps() {
+    setSavingSteps(true);
+    setStepsSaved(false);
     try {
-      var params = "?stepOrder=" + step.step_order + "&tenantId=" + tenant.id;
-      if (step.id) params = "?stepId=" + step.id + "&tenantId=" + tenant.id;
-      var res = await fetch("/api/tenant/preview-email" + params);
-      var data = await res.json();
-      if (data.html) {
-        setPreviewModal({ html: data.html, step: step });
+      await supabase.from("notification_steps").delete().eq("tenant_id", tenant.id);
+      if (steps.length > 0) {
+        var toInsert = steps.map(function(s) {
+          return {
+            tenant_id: tenant.id,
+            step_order: s.step_order,
+            delay_days: s.delay_days || 0,
+            delay_hours: s.delay_hours || 0,
+            delay_minutes: s.delay_minutes || 0,
+            send_sms: s.send_sms !== false,
+            send_email: s.send_email !== false,
+            email_type: s.email_type || "full_results",
+            email_subject: s.email_subject || null,
+            email_intro: s.email_intro || null,
+            email_body: s.email_body || null,
+            cta_enabled: s.cta_enabled !== false,
+            cta_text: s.cta_text || null,
+            cta_url: s.cta_url || null,
+            sms_template: s.sms_template || null,
+            is_active: s.is_active !== false,
+          };
+        });
+        await supabase.from("notification_steps").insert(toInsert);
       }
+      setStepsSaved(true);
+      setTimeout(function() { setStepsSaved(false); }, 3000);
     } catch (err) {
-      console.error("Preview error:", err);
+      alert("Save failed: " + err.message);
     }
-    setPreviewLoading(function(prev) { return Object.assign({}, prev, { [step.step_order]: false }); });
-  }
-
-  function insertSmsChip(stepOrder, chip) {
-    var el = smsRefs.current[stepOrder];
-    var step = steps.find(function(s) { return s.step_order === stepOrder; });
-    var current = (step && step.sms_template) || "";
-    if (!el) { updateStep(stepOrder, "sms_template", current + chip); return; }
-    var start = el.selectionStart;
-    var end = el.selectionEnd;
-    var newVal = current.slice(0, start) + chip + current.slice(end);
-    updateStep(stepOrder, "sms_template", newVal);
-    setTimeout(function() {
-      el.focus();
-      el.selectionStart = start + chip.length;
-      el.selectionEnd = start + chip.length;
-    }, 0);
-  }
-
-  function formatDelay(days, hours, minutes) {
-    var total = ((days || 0) * 1440) + ((hours || 0) * 60) + (minutes || 0);
-    if (total === 0) return "Sends immediately after analysis";
-    var parts = [];
-    if (days > 0) parts.push(days + " day" + (days > 1 ? "s" : ""));
-    if (hours > 0) parts.push(hours + " hour" + (hours > 1 ? "s" : ""));
-    if (minutes > 0) parts.push(minutes + " minute" + (minutes > 1 ? "s" : ""));
-    return "Sends " + parts.join(", ") + " after analysis";
+    setSavingSteps(false);
   }
 
   async function loadQueue(tenantId) {
@@ -722,425 +660,81 @@ export default function TenantSettingsPage() {
         </section>
 
         {/* ── SECTION 5: NOTIFICATIONS ── */}
-        <section id="notifications" style={sectionStyle}>
-          <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>Message Sequence</h2>
-          <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: "0 0 16px" }}>Configure automated messages sent to clients after their analysis. Up to 3 messages.</p>
+        <div id="notifications" style={{
+          background: "var(--bg-card)", borderRadius: "16px",
+          border: "1px solid var(--border)", padding: "28px 24px",
+          marginBottom: "16px",
+        }}>
+          <h2 style={{ fontSize: "16px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
+            Message Sequence
+          </h2>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: "0 0 24px" }}>
+            Automatically send clients their results after each analysis. Set up to 3 messages at different times.
+          </p>
 
           {!ghlForm.ghl_enabled && (
             <div style={{
-              padding: "12px 14px", borderRadius: "9px", marginBottom: "16px",
-              background: "rgba(255,165,0,0.08)", border: "1px solid rgba(255,165,0,0.3)",
+              padding: "12px 16px", borderRadius: "10px", marginBottom: "20px",
+              background: "rgba(255,184,0,0.08)", border: "1px solid rgba(255,184,0,0.25)",
               fontSize: "13px", color: "#FFA500",
             }}>
-              ⚠ GHL must be connected to send messages. Set up GHL Integration above first.
+              ⚠ GHL must be connected to send notifications.
+              <a href="#ghl" style={{ color: "#FFA500", marginLeft: "8px", fontWeight: "600" }}>
+                Set up GHL Integration ↑
+              </a>
             </div>
           )}
 
-          {/* Step cards */}
-          {[1, 2, 3].map(function(order) {
-            var step = steps.find(function(s) { return s.step_order === order; });
-            var prevStep = steps.find(function(s) { return s.step_order === order - 1; });
-            var showAdd = !step && (order === 1 || prevStep);
+          {[1, 2, 3].map(function(stepNum) {
+            var step = steps.find(function(s) { return s.step_order === stepNum; });
+            var isAdded = !!step;
 
-            if (!step && !showAdd) return null;
+            if (!isAdded && stepNum > 1 && !steps.find(function(s) { return s.step_order === stepNum - 1; })) {
+              return null;
+            }
 
-            if (!step) {
+            if (!isAdded) {
               return (
-                <div key={order} style={{ marginBottom: "12px" }}>
-                  <button
-                    onClick={function() { addStep(order); }}
-                    style={{
-                      width: "100%", padding: "14px", borderRadius: "10px",
-                      border: "2px dashed var(--border)", background: "transparent",
-                      color: "var(--text-muted)", fontSize: "13px", fontWeight: "600",
-                      cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-                    }}>
-                    + Add Message {order}
-                  </button>
-                </div>
+                <button key={stepNum}
+                  onClick={function() { addStep(stepNum); }}
+                  style={{
+                    width: "100%", padding: "16px", borderRadius: "12px",
+                    border: "2px dashed var(--border)", background: "transparent",
+                    color: "var(--text-muted)", fontSize: "13px", fontWeight: "600",
+                    cursor: "pointer", marginBottom: "12px", textAlign: "center",
+                  }}>
+                  + Add Message {stepNum}{stepNum === 1 ? " (Initial Results)" : stepNum === 2 ? " (Follow-up)" : " (Final Push)"}
+                </button>
               );
             }
 
-            var isFullResults = step.email_type !== "custom";
-            var saving = savingStep[order];
-            var saved = savedStep[order];
-            var deleting = deletingStep[order];
-            var previewing = previewLoading[order];
-            var delayText = formatDelay(step.delay_days, step.delay_hours, step.delay_minutes);
-
             return (
-              <div key={order} style={{
-                marginBottom: "16px", borderRadius: "12px",
-                border: "1.5px solid var(--border)", overflow: "hidden",
-              }}>
-                {/* Step header */}
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "14px 18px",
-                  background: step.enabled ? "rgba(57,255,20,0.04)" : "var(--surface)",
-                  borderBottom: "1px solid var(--border)",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{
-                      width: "26px", height: "26px", borderRadius: "50%",
-                      background: step.enabled ? "var(--brand)" : "var(--border)",
-                      color: step.enabled ? "#000" : "var(--text-muted)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: "12px", fontWeight: "700", flexShrink: 0,
-                    }}>{order}</div>
-                    <span style={{ fontSize: "14px", fontWeight: "700", color: "var(--text)" }}>
-                      Message {order}{order === 1 ? " (required)" : " (optional)"}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    {order > 1 && (
-                      <button
-                        onClick={function() { deleteStep(step); }}
-                        disabled={deleting}
-                        style={{
-                          background: "none", border: "none", cursor: "pointer",
-                          color: "var(--danger)", fontSize: "13px", padding: "4px 8px",
-                          opacity: deleting ? 0.5 : 1,
-                        }}>
-                        {deleting ? "..." : "✕ Remove"}
-                      </button>
-                    )}
-                    {/* Enable/disable toggle */}
-                    <div
-                      onClick={function() { updateStep(order, "enabled", !step.enabled); }}
-                      style={{
-                        width: "38px", height: "22px", borderRadius: "11px", cursor: "pointer",
-                        background: step.enabled ? "var(--brand)" : "var(--border)",
-                        position: "relative", transition: "background 0.2s", flexShrink: 0,
-                      }}>
-                      <div style={{
-                        position: "absolute", top: "3px",
-                        left: step.enabled ? "17px" : "3px",
-                        width: "16px", height: "16px", borderRadius: "50%",
-                        background: step.enabled ? "#000" : "var(--text-muted)",
-                        transition: "left 0.2s",
-                      }} />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Step body */}
-                <div style={{ padding: "18px", display: "flex", flexDirection: "column", gap: "16px" }}>
-
-                  {/* Delay */}
-                  <div>
-                    <p style={{ fontSize: "11px", fontWeight: "600", color: "var(--text-muted)", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>When to send</p>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                      {[
-                        { key: "delay_days", label: "days" },
-                        { key: "delay_hours", label: "hours" },
-                        { key: "delay_minutes", label: "min" },
-                      ].map(function(d) {
-                        return (
-                          <div key={d.key} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                            <input
-                              type="number"
-                              min="0"
-                              value={step[d.key] || 0}
-                              onChange={function(e) { updateStep(order, d.key, Math.max(0, parseInt(e.target.value) || 0)); }}
-                              style={Object.assign({}, inputStyle, { width: "60px", textAlign: "center", padding: "8px 6px" })}
-                            />
-                            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{d.label}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p style={{ fontSize: "12px", color: "var(--brand)", margin: "6px 0 0", fontWeight: "600" }}>{delayText}</p>
-                  </div>
-
-                  {/* Channels */}
-                  <div>
-                    <p style={{ fontSize: "11px", fontWeight: "600", color: "var(--text-muted)", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Channel</p>
-                    <div style={{ display: "flex", gap: "12px" }}>
-                      {[{ key: "send_email", label: "Email" }, { key: "send_sms", label: "SMS" }].map(function(ch) {
-                        var checked = step[ch.key];
-                        return (
-                          <div
-                            key={ch.key}
-                            onClick={function() { updateStep(order, ch.key, !checked); }}
-                            style={{
-                              display: "flex", alignItems: "center", gap: "7px", cursor: "pointer",
-                              padding: "7px 12px", borderRadius: "8px",
-                              background: checked ? "rgba(57,255,20,0.08)" : "var(--surface)",
-                              border: "1.5px solid " + (checked ? "rgba(57,255,20,0.4)" : "var(--border)"),
-                            }}>
-                            <div style={{
-                              width: "15px", height: "15px", borderRadius: "3px",
-                              border: "2px solid " + (checked ? "var(--brand)" : "var(--border)"),
-                              background: checked ? "var(--brand)" : "transparent",
-                              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                            }}>
-                              {checked && <span style={{ fontSize: "9px", color: "#000", fontWeight: "900" }}>✓</span>}
-                            </div>
-                            <span style={{ fontSize: "13px", color: checked ? "var(--text)" : "var(--text-muted)", fontWeight: checked ? "600" : "400" }}>{ch.label}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Email settings */}
-                  {step.send_email && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                      <div style={{ height: "1px", background: "var(--border)" }} />
-                      <p style={{ fontSize: "11px", fontWeight: "600", color: "var(--text-muted)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>Email Settings</p>
-
-                      {/* Email type (only show for step 1; steps 2+ always custom) */}
-                      {order === 1 && (
-                        <div>
-                          <p style={labelStyle}>Email type</p>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                            {[
-                              { val: "full_results", label: "Full results report", desc: "Includes all scores, criteria, and priority actions" },
-                              { val: "custom", label: "Custom message", desc: "Write your own email body" },
-                            ].map(function(opt) {
-                              var sel = (step.email_type === opt.val) || (opt.val === "full_results" && !step.email_type);
-                              return (
-                                <div
-                                  key={opt.val}
-                                  onClick={function() { updateStep(order, "email_type", opt.val); }}
-                                  style={{
-                                    display: "flex", alignItems: "center", gap: "10px", cursor: "pointer",
-                                    padding: "9px 12px", borderRadius: "9px",
-                                    background: sel ? "rgba(57,255,20,0.06)" : "var(--surface)",
-                                    border: "1.5px solid " + (sel ? "rgba(57,255,20,0.4)" : "var(--border)"),
-                                  }}>
-                                  <div style={{
-                                    width: "15px", height: "15px", borderRadius: "50%", flexShrink: 0,
-                                    border: "2px solid " + (sel ? "var(--brand)" : "var(--border)"),
-                                    background: sel ? "var(--brand)" : "transparent",
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                  }}>
-                                    {sel && <div style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#000" }} />}
-                                  </div>
-                                  <div>
-                                    <p style={{ fontSize: "13px", fontWeight: "600", margin: 0, color: sel ? "var(--text)" : "var(--text-muted)" }}>{opt.label}</p>
-                                    <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{opt.desc}</p>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Subject */}
-                      <div>
-                        <label style={labelStyle}>Subject line</label>
-                        <input
-                          type="text"
-                          value={step.email_subject || ""}
-                          onChange={function(e) { updateStep(order, "email_subject", e.target.value); }}
-                          style={inputStyle}
-                          placeholder="Your Credit Analysis Report Is Ready"
-                        />
-                      </div>
-
-                      {/* Intro or body */}
-                      {isFullResults ? (
-                        <div>
-                          <label style={labelStyle}>Intro paragraph (shown at top of email)</label>
-                          <textarea
-                            value={step.email_intro || ""}
-                            onChange={function(e) { updateStep(order, "email_intro", e.target.value); }}
-                            rows={3}
-                            style={Object.assign({}, inputStyle, { resize: "vertical", lineHeight: 1.5 })}
-                            placeholder="Your credit analysis report is ready. Here's a complete breakdown of your current credit profile and funding readiness score."
-                          />
-                        </div>
-                      ) : (
-                        <div>
-                          <label style={labelStyle}>Email body</label>
-                          <textarea
-                            value={step.email_body || ""}
-                            onChange={function(e) { updateStep(order, "email_body", e.target.value); }}
-                            rows={6}
-                            style={Object.assign({}, inputStyle, { resize: "vertical", lineHeight: 1.6 })}
-                            placeholder={"Hi [firstName],\n\nJust following up on your credit analysis. Have you had a chance to review your results?\n\nWe'd love to help you take the next step!"}
-                          />
-                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                            {["[firstName]", "[lastName]", "[score]", "[url]"].map(function(chip) {
-                              return (
-                                <button key={chip}
-                                  onClick={function() {
-                                    updateStep(order, "email_body", (step.email_body || "") + chip);
-                                  }}
-                                  style={{
-                                    padding: "2px 8px", borderRadius: "20px", fontSize: "11px",
-                                    fontWeight: "600", cursor: "pointer",
-                                    background: "rgba(57,255,20,0.08)", color: "var(--brand)",
-                                    border: "1px solid rgba(57,255,20,0.3)",
-                                  }}>{chip}</button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* CTA */}
-                      <div style={{ padding: "12px 14px", borderRadius: "9px", background: "var(--surface)", border: "1px solid var(--border)" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: step.cta_enabled ? "12px" : 0 }}>
-                          <div
-                            onClick={function() { updateStep(order, "cta_enabled", !step.cta_enabled); }}
-                            style={{
-                              width: "38px", height: "22px", borderRadius: "11px", cursor: "pointer",
-                              background: step.cta_enabled ? "var(--brand)" : "var(--border)",
-                              position: "relative", transition: "background 0.2s", flexShrink: 0,
-                            }}>
-                            <div style={{
-                              position: "absolute", top: "3px",
-                              left: step.cta_enabled ? "17px" : "3px",
-                              width: "16px", height: "16px", borderRadius: "50%",
-                              background: step.cta_enabled ? "#000" : "var(--text-muted)",
-                              transition: "left 0.2s",
-                            }} />
-                          </div>
-                          <span style={{ fontSize: "13px", color: "var(--text)", fontWeight: "600" }}>Include call-to-action button</span>
-                        </div>
-                        {step.cta_enabled && (
-                          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                            <div>
-                              <label style={labelStyle}>Button text</label>
-                              <input
-                                type="text"
-                                value={step.cta_text || ""}
-                                onChange={function(e) { updateStep(order, "cta_text", e.target.value); }}
-                                style={inputStyle}
-                                placeholder="Book a Free Consultation"
-                              />
-                            </div>
-                            <div>
-                              <label style={labelStyle}>Button link</label>
-                              <input
-                                type="text"
-                                value={step.cta_url || ""}
-                                onChange={function(e) { updateStep(order, "cta_url", e.target.value); }}
-                                style={inputStyle}
-                                placeholder="https://calendly.com/yourbusiness"
-                              />
-                            </div>
-                            {step.cta_url && (
-                              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Preview:</span>
-                                <span style={{
-                                  padding: "5px 12px", borderRadius: "6px",
-                                  background: "var(--brand)", color: "#000",
-                                  fontSize: "12px", fontWeight: "700",
-                                }}>{step.cta_text || "Book a Free Consultation"}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Preview email button */}
-                      <button
-                        onClick={function() { previewStep(step); }}
-                        disabled={previewing}
-                        style={{
-                          padding: "8px 16px", borderRadius: "8px", fontSize: "12px", fontWeight: "600",
-                          cursor: previewing ? "not-allowed" : "pointer",
-                          background: "transparent", border: "1.5px solid var(--border)",
-                          color: "var(--text-muted)", alignSelf: "flex-start",
-                        }}>
-                        {previewing ? "Loading preview..." : "Preview Email"}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* SMS settings */}
-                  {step.send_sms && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                      <div style={{ height: "1px", background: "var(--border)" }} />
-                      <p style={{ fontSize: "11px", fontWeight: "600", color: "var(--text-muted)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>SMS Settings</p>
-                      <div>
-                        <label style={labelStyle}>SMS message</label>
-                        <textarea
-                          ref={function(el) { smsRefs.current[order] = el; }}
-                          value={step.sms_template || ""}
-                          onChange={function(e) { updateStep(order, "sms_template", e.target.value); }}
-                          rows={4}
-                          style={Object.assign({}, inputStyle, { resize: "vertical", lineHeight: 1.5 })}
-                          placeholder={"Hi [firstName]! Your credit analysis report is ready. Score: [score]/10.\nView full report: [url]"}
-                        />
-                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                          {["[firstName]", "[lastName]", "[score]", "[url]", "[cta_url]"].map(function(chip) {
-                            return (
-                              <button key={chip}
-                                onClick={function() { insertSmsChip(order, chip); }}
-                                style={{
-                                  padding: "2px 8px", borderRadius: "20px", fontSize: "11px",
-                                  fontWeight: "600", cursor: "pointer",
-                                  background: "rgba(57,255,20,0.08)", color: "var(--brand)",
-                                  border: "1px solid rgba(57,255,20,0.3)",
-                                }}>{chip}</button>
-                            );
-                          })}
-                        </div>
-                        <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "6px 0 0" }}>Leave blank to use the default template</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Save button */}
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <button
-                      onClick={function() { saveStep(step); }}
-                      disabled={saving}
-                      style={{
-                        padding: "10px 20px", borderRadius: "9px", fontSize: "13px", fontWeight: "700",
-                        cursor: saving ? "not-allowed" : "pointer", border: "none",
-                        background: saved ? "rgba(57,255,20,0.15)" : saving ? "var(--border)" : "var(--brand)",
-                        color: saved ? "var(--brand)" : saving ? "var(--text-muted)" : "#000",
-                      }}>
-                      {saved ? "✓ Saved" : saving ? "Saving..." : "Save message " + order}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <StepCard
+                key={stepNum}
+                stepNum={stepNum}
+                step={step}
+                tenant={tenant}
+                onChange={function(updated) { updateStep(stepNum, updated); }}
+                onDelete={function() { deleteStep(stepNum); }}
+              />
             );
           })}
 
-          {/* Email preview modal */}
-          {previewModal && (
-            <div style={{
-              position: "fixed", inset: 0, zIndex: 200,
-              background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
-              padding: "20px",
-            }}>
-              <div style={{
-                width: "100%", maxWidth: "680px", maxHeight: "90vh",
-                background: "var(--bg-card)", borderRadius: "14px",
-                border: "1px solid var(--border)", overflow: "hidden",
-                display: "flex", flexDirection: "column",
+          {steps.length > 0 && (
+            <button
+              onClick={saveSteps}
+              disabled={savingSteps}
+              style={{
+                width: "100%", padding: "14px", borderRadius: "12px",
+                background: stepsSaved ? "rgba(57,255,20,0.15)" : savingSteps ? "var(--border)" : "var(--brand)",
+                border: "none",
+                color: stepsSaved ? "var(--brand)" : savingSteps ? "var(--text-muted)" : "#000",
+                fontSize: "14px", fontWeight: "700",
+                cursor: savingSteps ? "not-allowed" : "pointer",
+                marginTop: "16px",
               }}>
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "14px 18px", borderBottom: "1px solid var(--border)",
-                }}>
-                  <span style={{ fontSize: "14px", fontWeight: "700", color: "var(--text)" }}>
-                    Email Preview — Message {previewModal.step && previewModal.step.step_order}
-                  </span>
-                  <button
-                    onClick={function() { setPreviewModal(null); }}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "20px", lineHeight: 1 }}>
-                    ×
-                  </button>
-                </div>
-                <div style={{ flex: 1, overflow: "auto" }}>
-                  <iframe
-                    srcDoc={previewModal.html}
-                    style={{ width: "100%", height: "600px", border: "none" }}
-                    title="Email preview"
-                  />
-                </div>
-              </div>
-            </div>
+              {savingSteps ? "Saving..." : stepsSaved ? "✓ Sequence Saved" : "Save Message Sequence"}
+            </button>
           )}
 
           {/* Queue status */}
@@ -1223,9 +817,307 @@ export default function TenantSettingsPage() {
               </div>
             )}
           </div>
-        </section>
+        </div>
 
       </div>
+    </div>
+  );
+}
+
+function StepCard({ stepNum, step, tenant, onChange, onDelete }) {
+  var defaultSmsTemplate = "Hi [firstName]! Your credit analysis is ready. Score: [score]/10. View your full report: [url]";
+  var defaultEmailSubject = stepNum === 1
+    ? "Your Credit Analysis Report Is Ready"
+    : stepNum === 2
+    ? "Following Up On Your Credit Analysis"
+    : "Your Credit Journey Starts Here";
+
+  var delayDays = step.delay_days || 0;
+  var delayHours = step.delay_hours || 0;
+  var delayMinutes = step.delay_minutes || 0;
+
+  function delayLabel() {
+    if (delayDays === 0 && delayHours === 0 && delayMinutes === 0) return "Sends immediately after analysis";
+    var parts = [];
+    if (delayDays > 0) parts.push(delayDays + " day" + (delayDays !== 1 ? "s" : ""));
+    if (delayHours > 0) parts.push(delayHours + " hour" + (delayHours !== 1 ? "s" : ""));
+    if (delayMinutes > 0) parts.push(delayMinutes + " minute" + (delayMinutes !== 1 ? "s" : ""));
+    return "Sends " + parts.join(" ") + " after analysis";
+  }
+
+  function insertVariable(field, variable) {
+    var current = step[field] || "";
+    onChange(Object.assign({}, step, { [field]: current + variable }));
+  }
+
+  var isFullResults = (step.email_type || "full_results") === "full_results";
+  var brandColor = (tenant && tenant.brand_color) ? tenant.brand_color : "var(--brand)";
+
+  var fieldStyle = {
+    width: "100%", padding: "11px 14px", borderRadius: "10px",
+    background: "var(--bg-card)", border: "1.5px solid var(--border)",
+    color: "var(--text)", fontSize: "13px", outline: "none", boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{
+      background: "var(--bg)", border: "1px solid var(--border)",
+      borderRadius: "14px", padding: "20px", marginBottom: "16px",
+      opacity: step.is_active === false ? 0.6 : 1,
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{
+            width: "28px", height: "28px", borderRadius: "50%",
+            background: "var(--brand)", display: "flex", alignItems: "center",
+            justifyContent: "center", fontSize: "13px", fontWeight: "700", color: "#000", flexShrink: 0,
+          }}>{stepNum}</div>
+          <div>
+            <p style={{ fontSize: "14px", fontWeight: "700", margin: 0, color: "var(--text)" }}>
+              {stepNum === 1 ? "Initial Results" : stepNum === 2 ? "Follow-up" : "Final Push"}
+            </p>
+            <p style={{ fontSize: "11px", color: "var(--brand)", margin: 0, fontWeight: "600" }}>{delayLabel()}</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
+            <div
+              onClick={function() { onChange(Object.assign({}, step, { is_active: !step.is_active })); }}
+              style={{
+                width: "36px", height: "20px", borderRadius: "10px", cursor: "pointer",
+                background: step.is_active !== false ? "var(--brand)" : "var(--border)",
+                position: "relative", transition: "background 0.2s",
+              }}>
+              <div style={{
+                position: "absolute", top: "3px",
+                left: step.is_active !== false ? "18px" : "3px",
+                width: "14px", height: "14px", borderRadius: "50%",
+                background: "#fff", transition: "left 0.2s",
+              }} />
+            </div>
+            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Active</span>
+          </label>
+          <button
+            onClick={function() { if (window.confirm("Delete Message " + stepNum + "?")) { onDelete(); } }}
+            style={{
+              padding: "6px 10px", borderRadius: "8px", fontSize: "12px",
+              background: "rgba(255,68,68,0.1)", border: "1px solid rgba(255,68,68,0.2)",
+              color: "var(--danger)", cursor: "pointer", fontWeight: "600",
+            }}>
+            Delete
+          </button>
+        </div>
+      </div>
+
+      {/* When to send */}
+      <div style={{ marginBottom: "20px" }}>
+        <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 10px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>When to Send</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          {[
+            { label: "Days", field: "delay_days", val: delayDays },
+            { label: "Hours", field: "delay_hours", val: delayHours },
+            { label: "Minutes", field: "delay_minutes", val: delayMinutes },
+          ].map(function(item) {
+            return (
+              <div key={item.field} style={{ textAlign: "center" }}>
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 4px" }}>{item.label}</p>
+                <input
+                  type="number" min="0"
+                  value={item.val}
+                  onChange={function(e) { onChange(Object.assign({}, step, { [item.field]: Math.max(0, parseInt(e.target.value) || 0) })); }}
+                  style={Object.assign({}, fieldStyle, { width: "70px", textAlign: "center", fontSize: "16px", fontWeight: "700", padding: "10px 8px" })}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Send via */}
+      <div style={{ marginBottom: "20px" }}>
+        <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 10px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>Send Via</p>
+        <div style={{ display: "flex", gap: "10px" }}>
+          {[{ label: "Email", field: "send_email" }, { label: "SMS", field: "send_sms" }].map(function(ch) {
+            var isOn = step[ch.field] !== false;
+            return (
+              <button key={ch.field}
+                onClick={function() { onChange(Object.assign({}, step, { [ch.field]: !isOn })); }}
+                style={{
+                  padding: "8px 20px", borderRadius: "20px", fontSize: "13px",
+                  fontWeight: "600", cursor: "pointer", border: "1.5px solid",
+                  borderColor: isOn ? "var(--brand)" : "var(--border)",
+                  background: isOn ? "rgba(57,255,20,0.1)" : "transparent",
+                  color: isOn ? "var(--brand)" : "var(--text-muted)",
+                }}>
+                {ch.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Email settings */}
+      {step.send_email !== false && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "20px", marginBottom: "20px" }}>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 14px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>Email Settings</p>
+
+          {stepNum === 1 && (
+            <div style={{ marginBottom: "14px" }}>
+              <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 8px" }}>Email Content</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {[
+                  { val: "full_results", label: "Full results report", sub: "Complete analysis with all scores, criteria, and action plan" },
+                  { val: "custom", label: "Custom message", sub: "Write your own content" },
+                ].map(function(opt) {
+                  var selected = (step.email_type || "full_results") === opt.val;
+                  return (
+                    <div key={opt.val}
+                      onClick={function() { onChange(Object.assign({}, step, { email_type: opt.val })); }}
+                      style={{
+                        padding: "12px 14px", borderRadius: "10px", cursor: "pointer",
+                        border: "1.5px solid " + (selected ? "var(--brand)" : "var(--border)"),
+                        background: selected ? "rgba(57,255,20,0.06)" : "transparent",
+                        display: "flex", alignItems: "center", gap: "10px",
+                      }}>
+                      <div style={{
+                        width: "16px", height: "16px", borderRadius: "50%", flexShrink: 0,
+                        border: "2px solid " + (selected ? "var(--brand)" : "var(--border)"),
+                        background: selected ? "var(--brand)" : "transparent",
+                      }} />
+                      <div>
+                        <p style={{ fontSize: "13px", fontWeight: "600", margin: 0, color: "var(--text)" }}>{opt.label}</p>
+                        <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{opt.sub}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginBottom: "12px" }}>
+            <label style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginBottom: "6px" }}>Email Subject</label>
+            <input type="text"
+              value={step.email_subject || ""}
+              placeholder={defaultEmailSubject}
+              onChange={function(e) { onChange(Object.assign({}, step, { email_subject: e.target.value })); }}
+              style={fieldStyle}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginBottom: "6px" }}>
+              {isFullResults ? "Opening Paragraph (shown at top of email)" : "Email Body"}
+            </label>
+            <textarea
+              rows={isFullResults ? 3 : 5}
+              value={isFullResults ? (step.email_intro || "") : (step.email_body || "")}
+              placeholder={isFullResults
+                ? "Your credit analysis report is ready. Below you'll find your complete credit profile breakdown..."
+                : "Hi [firstName],\n\nJust following up on your credit analysis..."}
+              onChange={function(e) {
+                var field = isFullResults ? "email_intro" : "email_body";
+                onChange(Object.assign({}, step, { [field]: e.target.value }));
+              }}
+              style={Object.assign({}, fieldStyle, { resize: "vertical", lineHeight: "1.5" })}
+            />
+            {!isFullResults && (
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
+                {["[firstName]", "[lastName]", "[score]", "[url]"].map(function(v) {
+                  return (
+                    <button key={v}
+                      onClick={function() { insertVariable("email_body", v); }}
+                      style={{
+                        padding: "4px 10px", borderRadius: "20px", fontSize: "11px",
+                        background: "rgba(57,255,20,0.1)", border: "1px solid rgba(57,255,20,0.3)",
+                        color: "var(--brand)", cursor: "pointer", fontWeight: "600",
+                      }}>{v}</button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CTA */}
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: "20px", marginBottom: "20px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: step.cta_enabled ? "14px" : 0 }}>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0, fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>Call-to-Action Button</p>
+          <div
+            onClick={function() { onChange(Object.assign({}, step, { cta_enabled: !step.cta_enabled })); }}
+            style={{
+              width: "36px", height: "20px", borderRadius: "10px", cursor: "pointer",
+              background: step.cta_enabled ? "var(--brand)" : "var(--border)",
+              position: "relative", transition: "background 0.2s",
+            }}>
+            <div style={{
+              position: "absolute", top: "3px",
+              left: step.cta_enabled ? "18px" : "3px",
+              width: "14px", height: "14px", borderRadius: "50%",
+              background: "#fff", transition: "left 0.2s",
+            }} />
+          </div>
+        </div>
+        {step.cta_enabled && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginBottom: "6px" }}>Button Text</label>
+              <input type="text" value={step.cta_text || ""} placeholder="Book a Free Consultation"
+                onChange={function(e) { onChange(Object.assign({}, step, { cta_text: e.target.value })); }}
+                style={fieldStyle} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginBottom: "6px" }}>Button Link</label>
+              <input type="url" value={step.cta_url || ""} placeholder="https://calendly.com/yourbusiness"
+                onChange={function(e) { onChange(Object.assign({}, step, { cta_url: e.target.value })); }}
+                style={fieldStyle} />
+            </div>
+            {(step.cta_text || step.cta_url) && (
+              <div>
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 6px" }}>Preview:</p>
+                <div style={{
+                  display: "inline-block", padding: "10px 22px", borderRadius: "6px",
+                  background: brandColor, color: "#000", fontSize: "13px", fontWeight: "700",
+                }}>
+                  {step.cta_text || "Book a Free Consultation"} →
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SMS */}
+      {step.send_sms !== false && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "20px" }}>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "0 0 10px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em" }}>SMS Template</p>
+          <textarea
+            rows={3}
+            value={step.sms_template || ""}
+            placeholder={defaultSmsTemplate}
+            onChange={function(e) { onChange(Object.assign({}, step, { sms_template: e.target.value })); }}
+            style={Object.assign({}, fieldStyle, { resize: "vertical", lineHeight: "1.5" })}
+          />
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
+            {["[firstName]", "[lastName]", "[score]", "[url]", "[cta_url]"].map(function(v) {
+              return (
+                <button key={v}
+                  onClick={function() { insertVariable("sms_template", v); }}
+                  style={{
+                    padding: "4px 10px", borderRadius: "20px", fontSize: "11px",
+                    background: "rgba(57,255,20,0.1)", border: "1px solid rgba(57,255,20,0.3)",
+                    color: "var(--brand)", cursor: "pointer", fontWeight: "600",
+                  }}>{v}</button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "8px" }}>
+            [url] = full report link · [cta_url] = your booking/checkout link · Leave blank for default
+          </p>
+        </div>
+      )}
     </div>
   );
 }
