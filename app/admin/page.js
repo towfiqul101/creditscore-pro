@@ -31,11 +31,11 @@ export default function AdminPage() {
   useEffect(function () { loadData(); }, []);
 
   async function loadData() {
-    // Auth check
     var r = await supabase.auth.getUser();
     var u = r.data.user;
     if (!u) { window.location.href = "/login"; return; }
 
+    // Quick admin check with anon client
     var profileRes = await supabase.from("profiles").select("role").eq("id", u.id).single();
     if (!profileRes.data || profileRes.data.role !== "admin") {
       window.location.href = "/dashboard";
@@ -43,24 +43,18 @@ export default function AdminPage() {
     }
     setUser(u);
 
-    // Load tenants
-    var tenantsRes = await supabase.from("tenants").select("*").order("created_at", { ascending: false });
-    setTenants(tenantsRes.data || []);
+    // Fetch all data via service-role API (includes emails)
+    var res = await fetch("/api/admin/data");
+    if (!res.ok) {
+      console.error("Admin data fetch failed:", res.status);
+      setLoading(false);
+      return;
+    }
+    var data = await res.json();
 
-    // Load ALL analyses (admin sees everything — no user_id filter)
-    var analysesRes = await supabase
-      .from("analyses")
-      .select("id, contact_first_name, contact_last_name, contact_email, funding_score, funding_percentage, estimated_funding, score_avg, ghl_synced, created_at, user_id, tenant_id")
-      .order("created_at", { ascending: false })
-      .limit(200);
-    setAllAnalyses(analysesRes.data || []);
-
-    // Load all auth users via profiles
-    var profilesRes = await supabase
-      .from("profiles")
-      .select("id, full_name, role, plan, company_name, created_at");
-    setAllUsers(profilesRes.data || []);
-
+    setAllUsers(data.profiles || []);
+    setTenants(data.tenants || []);
+    setAllAnalyses(data.analyses || []);
     setLoading(false);
   }
 
@@ -126,25 +120,40 @@ export default function AdminPage() {
     await loadData();
   }
 
-  async function markUserPaid(userId) {
+  async function markUserPaid(userId, userEmail) {
     if (!window.confirm("Mark this user as paid? This will remove the 3-analysis limit and create their business account.")) return;
-    var res = await fetch("/api/admin/mark-paid", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: userId }),
-    });
-    var data = await res.json();
-    if (data.success) {
-      await loadData();
-    } else {
-      alert("Error: " + (data.error || "Unknown error"));
+    try {
+      var res = await fetch("/api/admin/mark-paid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: userId, userEmail: userEmail || "" }),
+      });
+      var data = await res.json();
+      if (data.success) {
+        alert("Done! User upgraded and tenant account created.");
+        await loadData();
+      } else {
+        alert("Error: " + (data.error || "Unknown error"));
+      }
+    } catch (err) {
+      alert("Request failed: " + err.message);
     }
   }
 
   async function revokeUserPaid(userId) {
     if (!window.confirm("Revoke paid status? They will return to free plan with 3-analysis limit.")) return;
-    await supabase.from("profiles").update({ plan: "free" }).eq("id", userId);
-    await loadData();
+    try {
+      var res = await fetch("/api/admin/mark-paid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: userId, revoke: true }),
+      });
+      var data = await res.json();
+      if (!data.success) { alert("Error: " + (data.error || "Unknown")); return; }
+      await loadData();
+    } catch (err) {
+      alert("Request failed: " + err.message);
+    }
   }
 
   async function handleDeleteAnalysis(id, name) {
@@ -261,9 +270,9 @@ export default function AdminPage() {
                       <tr key={u.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ padding: "12px 16px" }}>
                           <p style={{ fontSize: "13px", fontWeight: "600", margin: "0 0 2px", color: "var(--text)" }}>
-                            {u.full_name || "No name"}
+                            {u.full_name || "—"}
                           </p>
-                          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{u.id.slice(0, 8)}...</p>
+                          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{u.email || u.id.slice(0, 8) + "..."}</p>
                         </td>
                         <td style={{ padding: "12px 16px" }}>
                           <span style={{
@@ -295,7 +304,7 @@ export default function AdminPage() {
                                 border: "1px solid rgba(255,68,68,0.4)",
                               }}>Revoke</button>
                           ) : (
-                            <button onClick={function() { markUserPaid(u.id); }}
+                            <button onClick={function() { markUserPaid(u.id, u.email); }}
                               style={{
                                 padding: "5px 10px", borderRadius: "6px", fontSize: "11px",
                                 fontWeight: "600", cursor: "pointer",

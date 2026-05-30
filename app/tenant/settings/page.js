@@ -343,6 +343,18 @@ export default function TenantSettingsPage() {
     );
   }
 
+  if (!tenant) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
+        <div style={{ textAlign: "center" }}>
+          <p style={{ fontSize: "15px", color: "var(--text)", fontWeight: "600", marginBottom: "8px" }}>No business account found.</p>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "20px" }}>Your account may not have an active subscription yet.</p>
+          <a href="/dashboard" style={{ color: "var(--brand)", fontSize: "13px", textDecoration: "none" }}>← Back to Dashboard</a>
+        </div>
+      </div>
+    );
+  }
+
   var inputStyle = {
     width: "100%", padding: "10px 12px", borderRadius: "9px",
     background: "var(--bg)", border: "1.5px solid var(--border)",

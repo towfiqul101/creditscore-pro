@@ -48,6 +48,12 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: "userId required" }, { status: 400 });
     }
 
+    // Handle revoke
+    if (body.revoke) {
+      await supabase.from("profiles").update({ plan: "free" }).eq("id", userId);
+      return NextResponse.json({ success: true, revoked: true });
+    }
+
     // Get user email from auth
     var authUserRes = await supabase.auth.admin.getUserById(userId);
     var userEmail = authUserRes.data && authUserRes.data.user ? authUserRes.data.user.email : null;
