@@ -104,7 +104,7 @@ export async function POST(request) {
         phone: analysis.contact_phone,
       },
       analysisUrl: analysisUrl,
-      analysisResults: {
+      analysisData: {
         score: analysis.funding_score,
         estimatedFunding: analysis.estimated_funding,
         avgScore: analysis.score_avg,
