@@ -10,7 +10,11 @@ export default function TenantDashboardPage() {
   var [loading, setLoading] = useState(true);
   var [search, setSearch] = useState("");
   var [copiedId, setCopiedId] = useState(null);
-  var [sendModal, setSendModal] = useState({ open: false, analysis: null, sendSms: true, sendEmail: true, sending: false, result: null });
+  var [sendModal, setSendModal] = useState({
+    open: false, analysis: null,
+    sendSms: true, sendEmail: true, sending: false, result: null
+  });
+  var [activeFilter, setActiveFilter] = useState("all");
 
   var supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -45,7 +49,7 @@ export default function TenantDashboardPage() {
       .select("id, contact_first_name, contact_last_name, contact_email, contact_phone, funding_score, funding_percentage, estimated_funding, score_avg, ghl_synced, ghl_contact_id, created_at")
       .eq("tenant_id", t.id)
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(100);
     setAnalyses(analysesRes.data || []);
 
     var firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
@@ -55,7 +59,6 @@ export default function TenantDashboardPage() {
       .eq("tenant_id", t.id)
       .gte("created_at", firstOfMonth);
     setThisMonthCount(countRes.count || 0);
-
     setLoading(false);
   }
 
@@ -99,250 +102,443 @@ export default function TenantDashboardPage() {
   if (loading) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
-        <div style={{ width: "32px", height: "32px", borderRadius: "50%", border: "3px solid var(--border)", borderTopColor: "var(--brand)", animation: "spin 0.8s linear infinite" }} />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ textAlign: "center" }}>
+          <div style={{
+            width: "40px", height: "40px", borderRadius: "50%",
+            border: "3px solid rgba(57,255,20,0.2)", borderTopColor: "var(--brand)",
+            animation: "spin 0.8s linear infinite", margin: "0 auto 16px",
+          }} />
+          <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>Loading dashboard...</p>
+        </div>
       </div>
     );
   }
 
+  // ── Stats ─────────────────────────────────────────
   var totalClients = (function() {
     var seen = {};
-    var count = 0;
-    analyses.forEach(function(a) {
-      if (a.contact_email && !seen[a.contact_email]) { seen[a.contact_email] = true; count++; }
-    });
-    return count;
+    analyses.forEach(function(a) { if (a.contact_email) seen[a.contact_email] = true; });
+    return Object.keys(seen).length;
   })();
   var ghlSynced = analyses.filter(function(a) { return a.ghl_synced; }).length;
   var fundingReady = analyses.filter(function(a) { return (a.funding_score || 0) >= 8; }).length;
-  var analysisLimit = tenant.analysis_limit || 300;
+  var avgScore = analyses.length > 0
+    ? Math.round(analyses.reduce(function(s, a) { return s + (a.funding_score || 0); }, 0) / analyses.length * 10) / 10
+    : 0;
+  var analysisLimit = (tenant && tenant.analysis_limit) || 300;
   var usagePct = Math.min((thisMonthCount / analysisLimit) * 100, 100);
-  var usageColor = thisMonthCount >= 270 ? "var(--danger)" : thisMonthCount >= 240 ? "var(--warning)" : "var(--brand)";
   var firstName = user && user.user_metadata && user.user_metadata.full_name
     ? user.user_metadata.full_name.split(" ")[0] : "there";
-  var monthYear = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  var brandColor = (tenant && tenant.brand_color) ? tenant.brand_color : "#39FF14";
 
+  // ── Filtering ─────────────────────────────────────
   var filtered = analyses.filter(function(a) {
-    if (!search) return true;
-    var q = search.toLowerCase();
-    var name = ((a.contact_first_name || "") + " " + (a.contact_last_name || "")).toLowerCase();
-    return name.includes(q) || (a.contact_email || "").toLowerCase().includes(q);
+    var matchSearch = true;
+    var matchFilter = true;
+    if (search) {
+      var q = search.toLowerCase();
+      var name = ((a.contact_first_name || "") + " " + (a.contact_last_name || "")).toLowerCase();
+      matchSearch = name.includes(q) || (a.contact_email || "").toLowerCase().includes(q);
+    }
+    if (activeFilter === "ready") matchFilter = (a.funding_score || 0) >= 8;
+    if (activeFilter === "synced") matchFilter = !!a.ghl_synced;
+    if (activeFilter === "needs_work") matchFilter = (a.funding_score || 0) < 5;
+    return matchSearch && matchFilter;
   });
 
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+  function scoreColor(score) {
+    if (score >= 8) return "var(--brand)";
+    if (score >= 5) return "var(--warning)";
+    return "var(--danger)";
+  }
 
-      {/* HEADER */}
+  function scoreBg(score) {
+    if (score >= 8) return "rgba(57,255,20,0.1)";
+    if (score >= 5) return "rgba(255,184,0,0.1)";
+    return "rgba(255,68,68,0.1)";
+  }
+
+  function initials(a) {
+    var f = (a.contact_first_name || "?")[0].toUpperCase();
+    var l = (a.contact_last_name || "")[0] ? a.contact_last_name[0].toUpperCase() : "";
+    return f + l;
+  }
+
+  function avatarColor(name) {
+    var colors = [
+      "rgba(57,255,20,0.15)", "rgba(99,149,255,0.15)",
+      "rgba(255,99,160,0.15)", "rgba(255,184,0,0.15)",
+      "rgba(0,210,210,0.15)",
+    ];
+    var idx = (name || "").charCodeAt(0) % colors.length;
+    return colors[idx];
+  }
+
+  function avatarTextColor(name) {
+    var colors = ["var(--brand)", "#6395ff", "#ff63a0", "var(--warning)", "#00d2d2"];
+    var idx = (name || "").charCodeAt(0) % colors.length;
+    return colors[idx];
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "'Outfit', sans-serif" }}>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        .client-row { transition: background 0.15s; }
+        .client-row:hover { background: rgba(255,255,255,0.03) !important; }
+        .action-btn { transition: all 0.15s; }
+        .action-btn:hover { opacity: 0.85; transform: scale(0.97); }
+        .filter-pill { transition: all 0.15s; }
+        .filter-pill:hover { border-color: rgba(57,255,20,0.4) !important; color: var(--brand) !important; }
+        .stat-card { transition: transform 0.15s, border-color 0.15s; }
+        .stat-card:hover { transform: translateY(-2px); border-color: rgba(57,255,20,0.2) !important; }
+      `}</style>
+
+      {/* ── HEADER ── */}
       <header style={{
-        position: "sticky", top: 0, zIndex: 40,
+        position: "sticky", top: 0, zIndex: 50,
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "0 24px", height: "56px",
-        background: "var(--bg)", borderBottom: "1px solid var(--border)",
+        padding: "0 28px", height: "60px",
+        background: "rgba(0,0,0,0.85)", backdropFilter: "blur(12px)",
+        borderBottom: "1px solid var(--border)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           {tenant.logo_url ? (
-            <img src={tenant.logo_url} alt={tenant.name} style={{ height: "36px", borderRadius: "8px", objectFit: "contain" }} />
+            <img src={tenant.logo_url} alt={tenant.name}
+              style={{ height: "34px", borderRadius: "8px", objectFit: "contain" }} />
           ) : (
             <div style={{
-              width: "36px", height: "36px", borderRadius: "10px",
-              background: "rgba(57,255,20,0.12)", color: "var(--brand)",
+              width: "34px", height: "34px", borderRadius: "10px",
+              background: brandColor + "22", color: brandColor,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: "13px", fontWeight: "700",
             }}>CS</div>
           )}
-          <span style={{ fontSize: "15px", fontWeight: "700", color: "var(--text)" }}>
-            {tenant.brand_name || tenant.name}
-          </span>
-          <span style={{
-            fontSize: "11px", padding: "3px 8px", borderRadius: "6px",
-            background: "var(--surface)", color: "var(--text-muted)", fontWeight: "500",
-          }}>Business Dashboard</span>
+          <div>
+            <p style={{ fontSize: "14px", fontWeight: "700", color: "var(--text)", margin: 0, lineHeight: 1.2 }}>
+              {tenant.brand_name || tenant.name}
+            </p>
+            <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0, lineHeight: 1.2 }}>
+              Business Dashboard
+            </p>
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <a href="/analysis/new" style={{
-            padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: "700",
+            padding: "8px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "700",
             background: "var(--brand)", color: "#000", textDecoration: "none",
-          }}>+ New Analysis</a>
+            display: "flex", alignItems: "center", gap: "6px",
+          }}>
+            <span style={{ fontSize: "16px", lineHeight: 1 }}>+</span> New Analysis
+          </a>
           <a href="/tenant/settings" style={{
-            padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: "500",
-            background: "transparent", color: "var(--text-muted)", textDecoration: "none",
-            border: "1px solid var(--border)",
+            padding: "8px 14px", borderRadius: "8px", fontSize: "13px",
+            border: "1px solid var(--border)", color: "var(--text-muted)",
+            textDecoration: "none", transition: "all 0.15s",
           }}>Settings</a>
           <button onClick={handleLogout} style={{
-            background: "none", border: "none", fontSize: "13px",
-            color: "var(--text-muted)", cursor: "pointer", padding: "0",
+            padding: "8px 14px", borderRadius: "8px", fontSize: "13px",
+            background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer",
           }}>Sign out</button>
         </div>
       </header>
 
-      <div style={{ maxWidth: "960px", margin: "0 auto", padding: "32px 24px" }}>
+      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "32px 24px" }}>
 
-        {/* Welcome */}
-        <div style={{ marginBottom: "24px" }}>
-          <h1 style={{ fontSize: "20px", fontWeight: "700", margin: "0 0 4px", color: "var(--text)" }}>
-            {"Welcome back, " + firstName}
+        {/* ── WELCOME ── */}
+        <div style={{ marginBottom: "28px", animation: "fadeIn 0.4s ease" }}>
+          <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--text)", margin: "0 0 4px" }}>
+            {"Good " + (new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening") + ", " + firstName} 👋
           </h1>
           <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
-            {tenant.name + " · " + monthYear}
+            {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+            {" · "}{tenant.name}
           </p>
         </div>
 
-        {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "16px" }}>
+        {/* ── STAT CARDS ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
           {[
-            { label: "Total Clients", value: totalClients, color: "var(--text)" },
-            { label: "This Month", value: thisMonthCount, color: "var(--text)" },
-            { label: "GHL Synced", value: ghlSynced, color: ghlSynced > 0 ? "var(--brand)" : "var(--text)" },
-            { label: "Funding Ready", value: fundingReady, color: fundingReady > 0 ? "var(--brand)" : "var(--text)" },
+            { label: "Total Clients", value: totalClients, icon: "👥", color: "var(--text)" },
+            { label: "This Month", value: thisMonthCount, icon: "📅", color: "var(--text)" },
+            { label: "Funding Ready", value: fundingReady, icon: "✅", color: "var(--brand)" },
+            { label: "Avg Score", value: avgScore + "/10", icon: "⭐", color: avgScore >= 7 ? "var(--brand)" : avgScore >= 5 ? "var(--warning)" : "var(--danger)" },
           ].map(function(s) {
             return (
-              <div key={s.label} style={{
-                padding: "18px", borderRadius: "12px",
-                background: "var(--bg-card)", border: "1px solid var(--border)",
+              <div key={s.label} className="stat-card" style={{
+                background: "var(--bg-card)", borderRadius: "14px",
+                border: "1px solid var(--border)", padding: "18px 20px",
+                animation: "fadeIn 0.4s ease",
               }}>
-                <p style={{ fontSize: "26px", fontWeight: "700", margin: "0 0 4px", color: s.color }}>{s.value}</p>
-                <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>{s.label}</p>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+                  <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0, fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</p>
+                  <span style={{ fontSize: "18px" }}>{s.icon}</span>
+                </div>
+                <p style={{ fontSize: "28px", fontWeight: "700", margin: 0, color: s.color }}>{s.value}</p>
               </div>
             );
           })}
         </div>
 
-        {/* Monthly usage */}
-        <div style={{
-          padding: "16px 20px", borderRadius: "12px", marginBottom: "12px",
-          background: "var(--bg-card)", border: "1px solid var(--border)",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <span style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)" }}>Monthly Usage</span>
-            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-              {thisMonthCount + " / " + analysisLimit + " analyses used this month"}
-            </span>
-          </div>
-          <div style={{ height: "6px", borderRadius: "3px", background: "var(--border)", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: usagePct + "%", borderRadius: "3px", background: usageColor, transition: "width 0.4s" }} />
-          </div>
-          {thisMonthCount > 250 && (
-            <p style={{ fontSize: "11px", color: "var(--warning)", margin: "8px 0 0" }}>
-              {"⚠ Approaching monthly limit — " + (analysisLimit - thisMonthCount) + " analyses remaining"}
-            </p>
-          )}
-        </div>
+        {/* ── USAGE + GHL STATUS ROW ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "24px" }}>
 
-        {/* GHL banner */}
-        <div style={{
-          padding: "12px 16px", borderRadius: "10px", marginBottom: "24px",
-          background: tenant.ghl_enabled ? "rgba(57,255,20,0.07)" : "rgba(255,165,0,0.07)",
-          border: "1px solid " + (tenant.ghl_enabled ? "rgba(57,255,20,0.25)" : "rgba(255,165,0,0.25)"),
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <span style={{ fontSize: "13px", color: tenant.ghl_enabled ? "var(--brand)" : "#FFA500", fontWeight: "500" }}>
-            {tenant.ghl_enabled
-              ? "✓ GHL Connected — analyses sync to your CRM automatically"
-              : "⚠ GHL Not Connected — Set up in Settings to enable CRM sync"}
-          </span>
-          {!tenant.ghl_enabled && (
-            <a href="/tenant/settings#ghl" style={{ fontSize: "12px", fontWeight: "700", color: "#FFA500", textDecoration: "none" }}>
-              → Go to Settings
-            </a>
-          )}
-        </div>
-
-        {/* Search */}
-        <div style={{ marginBottom: "12px" }}>
-          <input
-            type="text"
-            value={search}
-            onChange={function(e) { setSearch(e.target.value); }}
-            placeholder="Search clients by name or email..."
-            style={{
-              width: "100%", padding: "10px 14px", borderRadius: "10px",
-              background: "var(--bg-card)", border: "1.5px solid var(--border)",
-              color: "var(--text)", fontSize: "13px", outline: "none", boxSizing: "border-box",
-            }}
-          />
-        </div>
-
-        {/* Table */}
-        <div style={{ borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
-          <div style={{
-            display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1.4fr",
-            gap: "8px", padding: "10px 16px",
-            background: "var(--bg-card)", borderBottom: "1px solid var(--border)",
-          }}>
-            {["Client", "Email", "Score", "FICO", "Funding", "GHL", "Date", ""].map(function(h) {
-              return (
-                <span key={h} style={{ fontSize: "11px", fontWeight: "600", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                  {h}
-                </span>
-              );
-            })}
-          </div>
-
-          {filtered.length === 0 ? (
-            <div style={{ padding: "48px", textAlign: "center", background: "var(--bg-card)" }}>
-              <p style={{ fontSize: "14px", color: "var(--text-muted)", margin: "0 0 8px" }}>
-                {search ? "No clients match your search." : "No analyses yet."}
+          {/* Usage */}
+          <div style={{ background: "var(--bg-card)", borderRadius: "14px", border: "1px solid var(--border)", padding: "18px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0 }}>Monthly Usage</p>
+              <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
+                <span style={{ color: usagePct > 90 ? "var(--danger)" : "var(--text)" }}>{thisMonthCount}</span>
+                {" / " + analysisLimit}
               </p>
-              {!search && (
-                <a href="/analysis/new" style={{ fontSize: "13px", color: "var(--brand)", textDecoration: "none" }}>
-                  Click + New Analysis to get started →
-                </a>
+            </div>
+            <div style={{ height: "8px", borderRadius: "4px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+              <div style={{
+                height: "100%", borderRadius: "4px",
+                width: usagePct + "%",
+                background: usagePct > 90 ? "var(--danger)" : usagePct > 70 ? "var(--warning)" : "var(--brand)",
+                transition: "width 1s ease",
+              }} />
+            </div>
+            <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "8px 0 0" }}>
+              {analysisLimit - thisMonthCount} analyses remaining this month
+            </p>
+          </div>
+
+          {/* GHL Status */}
+          <div style={{
+            background: "var(--bg-card)", borderRadius: "14px", padding: "18px 20px",
+            border: "1px solid " + (tenant.ghl_enabled ? "rgba(57,255,20,0.2)" : "rgba(255,165,0,0.2)"),
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <div style={{
+                  width: "8px", height: "8px", borderRadius: "50%",
+                  background: tenant.ghl_enabled ? "var(--brand)" : "#ffa500",
+                  boxShadow: tenant.ghl_enabled ? "0 0 8px rgba(57,255,20,0.6)" : "0 0 8px rgba(255,165,0,0.4)",
+                }} />
+                <p style={{ fontSize: "13px", fontWeight: "700", margin: 0, color: "var(--text)" }}>
+                  GHL {tenant.ghl_enabled ? "Connected" : "Not Connected"}
+                </p>
+              </div>
+              <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
+                {tenant.ghl_enabled
+                  ? ghlSynced + " contacts synced to CRM"
+                  : "Connect GHL to sync contacts automatically"}
+              </p>
+            </div>
+            {!tenant.ghl_enabled && (
+              <a href="/tenant/settings#ghl" style={{
+                padding: "8px 14px", borderRadius: "8px", fontSize: "12px",
+                fontWeight: "700", background: "rgba(255,165,0,0.1)",
+                border: "1px solid rgba(255,165,0,0.3)", color: "#ffa500",
+                textDecoration: "none", whiteSpace: "nowrap",
+              }}>Set up →</a>
+            )}
+          </div>
+        </div>
+
+        {/* ── CLIENTS TABLE SECTION ── */}
+        <div style={{ background: "var(--bg-card)", borderRadius: "16px", border: "1px solid var(--border)", overflow: "hidden" }}>
+
+          {/* Table header bar */}
+          <div style={{
+            padding: "18px 20px 14px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <p style={{ fontSize: "15px", fontWeight: "700", color: "var(--text)", margin: 0 }}>
+                Clients
+              </p>
+              <span style={{
+                padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: "700",
+                background: "rgba(57,255,20,0.12)", color: "var(--brand)",
+              }}>{filtered.length}</span>
+
+              {/* Filter pills */}
+              <div style={{ display: "flex", gap: "6px", marginLeft: "8px" }}>
+                {[
+                  { key: "all", label: "All" },
+                  { key: "ready", label: "🟢 Funding Ready" },
+                  { key: "needs_work", label: "🔴 Needs Work" },
+                  { key: "synced", label: "GHL Synced" },
+                ].map(function(f) {
+                  var isActive = activeFilter === f.key;
+                  return (
+                    <button key={f.key} className="filter-pill"
+                      onClick={function() { setActiveFilter(f.key); }}
+                      style={{
+                        padding: "4px 12px", borderRadius: "20px", fontSize: "11px",
+                        fontWeight: "600", cursor: "pointer", border: "1px solid",
+                        borderColor: isActive ? "var(--brand)" : "var(--border)",
+                        background: isActive ? "rgba(57,255,20,0.1)" : "transparent",
+                        color: isActive ? "var(--brand)" : "var(--text-muted)",
+                      }}>{f.label}</button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Search */}
+            <div style={{ position: "relative", minWidth: "220px" }}>
+              <span style={{
+                position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)",
+                fontSize: "14px", color: "var(--text-muted)", pointerEvents: "none",
+              }}>🔍</span>
+              <input
+                type="text" value={search}
+                onChange={function(e) { setSearch(e.target.value); }}
+                placeholder="Search clients..."
+                style={{
+                  width: "100%", padding: "8px 12px 8px 34px", borderRadius: "8px",
+                  background: "rgba(255,255,255,0.05)", border: "1px solid var(--border)",
+                  color: "var(--text)", fontSize: "13px", outline: "none", boxSizing: "border-box",
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Table */}
+          {filtered.length === 0 ? (
+            <div style={{ padding: "60px 24px", textAlign: "center" }}>
+              <p style={{ fontSize: "32px", margin: "0 0 12px" }}>🔍</p>
+              <p style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)", margin: "0 0 6px" }}>
+                {search || activeFilter !== "all" ? "No clients match your filter" : "No analyses yet"}
+              </p>
+              <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: "0 0 20px" }}>
+                {!search && activeFilter === "all" ? "Run your first analysis to get started" : "Try a different search or filter"}
+              </p>
+              {!search && activeFilter === "all" && (
+                <a href="/analysis/new" style={{
+                  padding: "10px 20px", borderRadius: "10px", fontSize: "13px",
+                  fontWeight: "700", background: "var(--brand)", color: "#000",
+                  textDecoration: "none", display: "inline-block",
+                }}>+ New Analysis</a>
               )}
             </div>
           ) : (
-            <div style={{ background: "var(--bg-card)" }}>
-              {filtered.map(function(a) {
+            <div>
+              {/* Column headers */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "2.5fr 1.8fr 0.7fr 0.9fr 1.2fr 0.7fr 1fr 1.2fr",
+                gap: "8px", padding: "10px 20px",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
+              }}>
+                {["Client", "Email", "Score", "FICO", "Funding", "GHL", "Date", "Actions"].map(function(h) {
+                  return (
+                    <span key={h} style={{
+                      fontSize: "10px", fontWeight: "700", color: "var(--text-dim)",
+                      textTransform: "uppercase", letterSpacing: "0.08em",
+                    }}>{h}</span>
+                  );
+                })}
+              </div>
+
+              {filtered.map(function(a, idx) {
                 var name = ((a.contact_first_name || "") + " " + (a.contact_last_name || "")).trim() || "Unknown";
                 var score = a.funding_score || 0;
-                var scoreColor = score >= 8 ? "var(--brand)" : score >= 5 ? "var(--warning)" : "var(--danger)";
-                var date = new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                var date = new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
                 return (
-                  <div key={a.id} style={{
-                    display: "grid", gridTemplateColumns: "2fr 2fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr 1.4fr",
-                    gap: "8px", padding: "12px 16px", alignItems: "center",
-                    borderBottom: "1px solid var(--border)",
+                  <div key={a.id} className="client-row" style={{
+                    display: "grid",
+                    gridTemplateColumns: "2.5fr 1.8fr 0.7fr 0.9fr 1.2fr 0.7fr 1fr 1.2fr",
+                    gap: "8px", padding: "12px 20px", alignItems: "center",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    animation: "fadeIn 0.3s ease " + (idx * 0.03) + "s both",
                   }}>
-                    <span style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                    <span style={{ fontSize: "12px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.contact_email || "—"}</span>
-                    <span style={{ fontSize: "13px", fontWeight: "700", color: scoreColor }}>{score + "/10"}</span>
-                    <span style={{ fontSize: "12px", color: "var(--text)" }}>{a.score_avg || "—"}</span>
-                    <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{a.estimated_funding || "—"}</span>
-                    <span style={{
-                      display: "inline-block", padding: "3px 8px", borderRadius: "6px",
-                      fontSize: "11px", fontWeight: "600",
-                      background: a.ghl_synced ? "rgba(57,255,20,0.15)" : "rgba(255,255,255,0.06)",
-                      color: a.ghl_synced ? "var(--brand)" : "var(--text-dim)",
-                    }}>{a.ghl_synced ? "Synced" : "Pending"}</span>
-                    <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{date}</span>
-                    <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
-                      <a href={"/analysis/" + a.id} style={{
-                        display: "inline-block", padding: "5px 10px", borderRadius: "6px",
-                        fontSize: "11px", fontWeight: "600", textDecoration: "none",
+
+                    {/* Client */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+                      <div style={{
+                        width: "34px", height: "34px", borderRadius: "10px", flexShrink: 0,
+                        background: avatarColor(a.contact_first_name),
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: "12px", fontWeight: "700", color: avatarTextColor(a.contact_first_name),
+                      }}>{initials(a)}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</p>
+                        <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{a.contact_phone || ""}</p>
+                      </div>
+                    </div>
+
+                    {/* Email */}
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {a.contact_email || "—"}
+                    </p>
+
+                    {/* Score badge */}
+                    <div>
+                      <span style={{
+                        display: "inline-block", padding: "4px 8px", borderRadius: "8px",
+                        fontSize: "12px", fontWeight: "700",
+                        background: scoreBg(score), color: scoreColor(score),
+                      }}>{score}/10</span>
+                    </div>
+
+                    {/* FICO */}
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0 }}>
+                      {a.score_avg || "—"}
+                    </p>
+
+                    {/* Funding */}
+                    <p style={{ fontSize: "12px", color: score >= 8 ? "var(--brand)" : "var(--text-muted)", margin: 0, fontWeight: score >= 8 ? "600" : "400" }}>
+                      {a.estimated_funding || "—"}
+                    </p>
+
+                    {/* GHL */}
+                    <div>
+                      {a.ghl_synced ? (
+                        <span style={{
+                          display: "inline-flex", alignItems: "center", gap: "4px",
+                          padding: "3px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: "600",
+                          background: "rgba(57,255,20,0.1)", color: "var(--brand)",
+                        }}>
+                          <span style={{ fontSize: "8px" }}>●</span> Synced
+                        </span>
+                      ) : (
+                        <span style={{
+                          padding: "3px 8px", borderRadius: "6px", fontSize: "11px",
+                          background: "rgba(255,255,255,0.05)", color: "var(--text-dim)",
+                        }}>—</span>
+                      )}
+                    </div>
+
+                    {/* Date */}
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>{date}</p>
+
+                    {/* Actions */}
+                    <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                      <a href={"/analysis/" + a.id} className="action-btn" style={{
+                        padding: "5px 10px", borderRadius: "6px", fontSize: "11px",
+                        fontWeight: "600", textDecoration: "none",
                         background: "rgba(57,255,20,0.1)", color: "var(--brand)",
                         border: "1px solid rgba(57,255,20,0.2)",
                       }}>View</a>
-                      <button
-                        onClick={function() { handleCopyRowLink(a.id); }}
+                      <button onClick={function() { handleCopyRowLink(a.id); }}
+                        className="action-btn"
                         title="Copy results link"
                         style={{
-                          padding: "5px 8px", borderRadius: "6px", fontSize: "11px",
+                          padding: "5px 8px", borderRadius: "6px", fontSize: "12px",
                           border: "1px solid var(--border)", cursor: "pointer",
-                          background: copiedId === a.id ? "rgba(57,255,20,0.15)" : "var(--bg)",
+                          background: copiedId === a.id ? "rgba(57,255,20,0.15)" : "rgba(255,255,255,0.04)",
                           color: copiedId === a.id ? "var(--brand)" : "var(--text-muted)",
-                          transition: "background 0.15s, color 0.15s",
                         }}>
                         {copiedId === a.id ? "✓" : "📋"}
                       </button>
                       {tenant.ghl_enabled && a.ghl_contact_id && (
-                        <button
-                          onClick={function() { openSendModal(a); }}
-                          title="Send results to client"
+                        <button onClick={function() { openSendModal(a); }}
+                          className="action-btn"
+                          title="Send results"
                           style={{
-                            padding: "5px 8px", borderRadius: "6px", fontSize: "11px",
+                            padding: "5px 8px", borderRadius: "6px", fontSize: "12px",
                             border: "1px solid var(--border)", cursor: "pointer",
-                            background: "var(--bg)", color: "var(--text-muted)",
-                          }}>Send</button>
+                            background: "rgba(255,255,255,0.04)", color: "var(--text-muted)",
+                          }}>✉️</button>
                       )}
                     </div>
                   </div>
@@ -353,57 +549,65 @@ export default function TenantDashboardPage() {
         </div>
       </div>
 
-      {/* Send Now Modal */}
+      {/* ── SEND MODAL ── */}
       {sendModal.open && sendModal.analysis && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 100,
-          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)",
+          background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
           display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
         }} onClick={function(e) { if (e.target === e.currentTarget && !sendModal.sending) closeSendModal(); }}>
           <div style={{
             background: "var(--bg-card)", border: "1px solid var(--border)",
-            borderRadius: "16px", padding: "28px 28px 24px", maxWidth: "380px", width: "100%",
-            boxShadow: "0 8px 40px rgba(0,0,0,0.4)",
+            borderRadius: "20px", padding: "28px", maxWidth: "380px", width: "100%",
+            animation: "fadeIn 0.2s ease",
           }}>
-            <h3 style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)", margin: "0 0 4px" }}>Send results to client?</h3>
-            <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: "0 0 20px" }}>
-              {((sendModal.analysis.contact_first_name || "") + " " + (sendModal.analysis.contact_last_name || "")).trim() || "Unknown"}
-            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+              <div style={{
+                width: "44px", height: "44px", borderRadius: "12px",
+                background: "rgba(57,255,20,0.1)", display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: "20px",
+              }}>✉️</div>
+              <div>
+                <h3 style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)", margin: "0 0 2px" }}>Send Results</h3>
+                <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
+                  {((sendModal.analysis.contact_first_name || "") + " " + (sendModal.analysis.contact_last_name || "")).trim()}
+                </p>
+              </div>
+            </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
               {sendModal.analysis.contact_phone && (
-                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={sendModal.sendSms}
+                <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer", padding: "12px 14px", borderRadius: "10px", background: sendModal.sendSms ? "rgba(57,255,20,0.06)" : "rgba(255,255,255,0.03)", border: "1px solid " + (sendModal.sendSms ? "rgba(57,255,20,0.2)" : "var(--border)"), transition: "all 0.15s" }}>
+                  <input type="checkbox" checked={sendModal.sendSms}
                     onChange={function(e) { setSendModal(function(prev) { return Object.assign({}, prev, { sendSms: e.target.checked }); }); }}
                     disabled={sendModal.sending}
-                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }}
-                  />
-                  <span style={{ fontSize: "13px", color: "var(--text)" }}>SMS to {sendModal.analysis.contact_phone}</span>
+                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }} />
+                  <div>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0 }}>SMS</p>
+                    <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{sendModal.analysis.contact_phone}</p>
+                  </div>
                 </label>
               )}
               {sendModal.analysis.contact_email && (
-                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={sendModal.sendEmail}
+                <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer", padding: "12px 14px", borderRadius: "10px", background: sendModal.sendEmail ? "rgba(57,255,20,0.06)" : "rgba(255,255,255,0.03)", border: "1px solid " + (sendModal.sendEmail ? "rgba(57,255,20,0.2)" : "var(--border)"), transition: "all 0.15s" }}>
+                  <input type="checkbox" checked={sendModal.sendEmail}
                     onChange={function(e) { setSendModal(function(prev) { return Object.assign({}, prev, { sendEmail: e.target.checked }); }); }}
                     disabled={sendModal.sending}
-                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }}
-                  />
-                  <span style={{ fontSize: "13px", color: "var(--text)" }}>Email to {sendModal.analysis.contact_email}</span>
+                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }} />
+                  <div>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0 }}>Email</p>
+                    <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{sendModal.analysis.contact_email}</p>
+                  </div>
                 </label>
               )}
             </div>
 
             {sendModal.result && (
               <div style={{
-                padding: "10px 12px", borderRadius: "8px", marginBottom: "16px",
+                padding: "12px 14px", borderRadius: "10px", marginBottom: "16px",
                 background: sendModal.result.success ? "rgba(57,255,20,0.08)" : "rgba(255,68,68,0.08)",
                 border: "1px solid " + (sendModal.result.success ? "rgba(57,255,20,0.3)" : "rgba(255,68,68,0.3)"),
-                fontSize: "13px",
-                color: sendModal.result.success ? "var(--brand)" : "var(--danger)",
+                fontSize: "13px", color: sendModal.result.success ? "var(--brand)" : "var(--danger)",
               }}>
                 {sendModal.result.success
                   ? "✓ Sent — SMS: " + (sendModal.result.smsSent ? "delivered" : "skipped") + ", Email: " + (sendModal.result.emailSent ? "delivered" : "skipped")
@@ -414,32 +618,28 @@ export default function TenantDashboardPage() {
             <div style={{ display: "flex", gap: "10px" }}>
               {!sendModal.result ? (
                 <>
-                  <button
-                    onClick={handleSendNow}
+                  <button onClick={handleSendNow}
                     disabled={sendModal.sending || (!sendModal.sendSms && !sendModal.sendEmail)}
                     style={{
-                      flex: 1, padding: "10px 16px", borderRadius: "9px", fontSize: "13px", fontWeight: "700",
-                      border: "none", cursor: (sendModal.sending || (!sendModal.sendSms && !sendModal.sendEmail)) ? "not-allowed" : "pointer",
+                      flex: 1, padding: "12px", borderRadius: "10px", fontSize: "14px",
+                      fontWeight: "700", cursor: sendModal.sending ? "not-allowed" : "pointer",
                       background: sendModal.sending ? "var(--border)" : "var(--brand)",
-                      color: sendModal.sending ? "var(--text-muted)" : "#000",
+                      border: "none", color: sendModal.sending ? "var(--text-muted)" : "#000",
                     }}>
                     {sendModal.sending ? "Sending..." : "Send Now"}
                   </button>
-                  <button
-                    onClick={closeSendModal}
-                    disabled={sendModal.sending}
+                  <button onClick={closeSendModal} disabled={sendModal.sending}
                     style={{
-                      padding: "10px 16px", borderRadius: "9px", fontSize: "13px",
+                      padding: "12px 16px", borderRadius: "10px", fontSize: "14px",
                       border: "1px solid var(--border)", cursor: "pointer",
                       background: "transparent", color: "var(--text-muted)",
                     }}>Cancel</button>
                 </>
               ) : (
-                <button
-                  onClick={closeSendModal}
+                <button onClick={closeSendModal}
                   style={{
-                    flex: 1, padding: "10px 16px", borderRadius: "9px", fontSize: "13px", fontWeight: "600",
-                    border: "1px solid var(--border)", cursor: "pointer",
+                    flex: 1, padding: "12px", borderRadius: "10px", fontSize: "14px",
+                    fontWeight: "600", border: "1px solid var(--border)", cursor: "pointer",
                     background: "transparent", color: "var(--text)",
                   }}>Close</button>
               )}
