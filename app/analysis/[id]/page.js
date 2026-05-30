@@ -11,6 +11,7 @@ export default function AnalysisDetail() {
   const [expandedCriteria, setExpandedCriteria] = useState(null);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
   const [copied, setCopied] = useState(false);
+  var [sendModal, setSendModal] = useState({ open: false, sending: false, result: null, sendSms: true, sendEmail: true });
   const router = useRouter();
   const params = useParams();
   const supabase = createClient();
@@ -117,12 +118,24 @@ export default function AnalysisDetail() {
   return (
     <div className="min-h-screen" style={{ background: "var(--bg)" }}>
       <header className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
-        <Link href="/dashboard" className="flex items-center gap-2.5" style={{ textDecoration: "none", color: "inherit" }}>
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
-            style={{ background: "rgba(57,255,20,0.12)", color: "var(--brand)" }}>CS</div>
-          <span className="text-sm font-semibold">CreditScore Pro</span>
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/dashboard" className="flex items-center gap-2.5" style={{ textDecoration: "none", color: "inherit" }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
+              style={{ background: "rgba(57,255,20,0.12)", color: "var(--brand)" }}>CS</div>
+            <span className="text-sm font-semibold">CreditScore Pro</span>
+          </Link>
+          <span style={{ color: "var(--border)" }}>|</span>
+          <Link href="/dashboard" className="text-xs" style={{ color: "var(--text-muted)", textDecoration: "none" }}>
+            ← Dashboard
+          </Link>
+        </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={function() { setSendModal({ open: true, sending: false, result: null, sendSms: true, sendEmail: true }); }}
+            className="px-4 py-2 rounded-lg text-xs font-medium transition-all"
+            style={{ background: "rgba(57,255,20,0.1)", border: "1px solid rgba(57,255,20,0.3)", color: "var(--brand)" }}>
+            ✉ Send Results
+          </button>
           <button onClick={handleCopyLink}
             className="px-4 py-2 rounded-lg text-xs font-medium transition-all"
             style={{ border: "1px solid var(--border)", color: copied ? "var(--brand)" : "var(--text-muted)" }}>
@@ -304,6 +317,131 @@ export default function AnalysisDetail() {
           </Link>
         </div>
       </div>
+
+      {sendModal.open && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 100,
+          background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
+        }}
+        onClick={function(e) { if (e.target === e.currentTarget && !sendModal.sending) setSendModal(function(p) { return Object.assign({}, p, { open: false }); }); }}>
+          <div style={{
+            background: "var(--surface)", border: "1px solid var(--border)",
+            borderRadius: "20px", padding: "28px", maxWidth: "380px", width: "100%",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+              <div style={{
+                width: "44px", height: "44px", borderRadius: "12px",
+                background: "rgba(57,255,20,0.1)", display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: "20px",
+              }}>✉️</div>
+              <div>
+                <h3 style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)", margin: "0 0 2px" }}>Send Results</h3>
+                <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
+                  {analysis.contact_first_name} {analysis.contact_last_name}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
+              {analysis.contact_phone && (
+                <label style={{
+                  display: "flex", alignItems: "center", gap: "12px", cursor: "pointer",
+                  padding: "12px 14px", borderRadius: "10px",
+                  background: sendModal.sendSms ? "rgba(57,255,20,0.06)" : "rgba(255,255,255,0.03)",
+                  border: "1px solid " + (sendModal.sendSms ? "rgba(57,255,20,0.2)" : "var(--border)"),
+                }}>
+                  <input type="checkbox" checked={sendModal.sendSms}
+                    onChange={function(e) { setSendModal(function(p) { return Object.assign({}, p, { sendSms: e.target.checked }); }); }}
+                    disabled={sendModal.sending}
+                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }} />
+                  <div>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0 }}>SMS</p>
+                    <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{analysis.contact_phone}</p>
+                  </div>
+                </label>
+              )}
+              {analysis.contact_email && (
+                <label style={{
+                  display: "flex", alignItems: "center", gap: "12px", cursor: "pointer",
+                  padding: "12px 14px", borderRadius: "10px",
+                  background: sendModal.sendEmail ? "rgba(57,255,20,0.06)" : "rgba(255,255,255,0.03)",
+                  border: "1px solid " + (sendModal.sendEmail ? "rgba(57,255,20,0.2)" : "var(--border)"),
+                }}>
+                  <input type="checkbox" checked={sendModal.sendEmail}
+                    onChange={function(e) { setSendModal(function(p) { return Object.assign({}, p, { sendEmail: e.target.checked }); }); }}
+                    disabled={sendModal.sending}
+                    style={{ width: "16px", height: "16px", accentColor: "var(--brand)" }} />
+                  <div>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)", margin: 0 }}>Email</p>
+                    <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>{analysis.contact_email}</p>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            {sendModal.result && (
+              <div style={{
+                padding: "12px 14px", borderRadius: "10px", marginBottom: "16px",
+                background: sendModal.result.success ? "rgba(57,255,20,0.08)" : "rgba(255,68,68,0.08)",
+                border: "1px solid " + (sendModal.result.success ? "rgba(57,255,20,0.3)" : "rgba(255,68,68,0.3)"),
+                fontSize: "13px",
+                color: sendModal.result.success ? "var(--brand)" : "var(--danger)",
+              }}>
+                {sendModal.result.success
+                  ? "✓ Sent — SMS: " + (sendModal.result.smsSent ? "delivered" : "skipped") + ", Email: " + (sendModal.result.emailSent ? "delivered" : "skipped")
+                  : "✗ " + (sendModal.result.error || "Failed — is GHL connected in Settings?")}
+              </div>
+            )}
+
+            {!sendModal.result ? (
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  disabled={sendModal.sending || (!sendModal.sendSms && !sendModal.sendEmail)}
+                  onClick={async function() {
+                    setSendModal(function(p) { return Object.assign({}, p, { sending: true }); });
+                    try {
+                      var res = await fetch("/api/tenant/send-now", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ analysisId: params.id, sendSms: sendModal.sendSms, sendEmail: sendModal.sendEmail }),
+                      });
+                      var data = await res.json();
+                      setSendModal(function(p) { return Object.assign({}, p, { sending: false, result: data }); });
+                    } catch (err) {
+                      setSendModal(function(p) { return Object.assign({}, p, { sending: false, result: { success: false, error: err.message } }); });
+                    }
+                  }}
+                  style={{
+                    flex: 1, padding: "12px", borderRadius: "10px", fontSize: "14px",
+                    fontWeight: "700", border: "none",
+                    cursor: sendModal.sending ? "not-allowed" : "pointer",
+                    background: sendModal.sending ? "var(--border)" : "var(--brand)",
+                    color: sendModal.sending ? "var(--text-muted)" : "#000",
+                  }}>
+                  {sendModal.sending ? "Sending..." : "Send Now"}
+                </button>
+                <button
+                  onClick={function() { setSendModal(function(p) { return Object.assign({}, p, { open: false }); }); }}
+                  disabled={sendModal.sending}
+                  style={{
+                    padding: "12px 16px", borderRadius: "10px", fontSize: "14px",
+                    border: "1px solid var(--border)", cursor: "pointer",
+                    background: "transparent", color: "var(--text-muted)",
+                  }}>Cancel</button>
+              </div>
+            ) : (
+              <button
+                onClick={function() { setSendModal(function(p) { return Object.assign({}, p, { open: false }); }); }}
+                style={{
+                  width: "100%", padding: "12px", borderRadius: "10px", fontSize: "14px",
+                  fontWeight: "600", border: "1px solid var(--border)", cursor: "pointer",
+                  background: "transparent", color: "var(--text)",
+                }}>Close</button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
