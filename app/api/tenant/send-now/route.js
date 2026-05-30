@@ -123,12 +123,17 @@ export async function POST(request) {
       },
     });
 
+    var anythingSent = sendResult.smsSent || sendResult.emailSent;
+    var hasError = sendResult.smsError || sendResult.emailError;
     return NextResponse.json({
-      success: true,
+      success: anythingSent,
       smsSent: sendResult.smsSent,
       emailSent: sendResult.emailSent,
       smsError: sendResult.smsError,
       emailError: sendResult.emailError,
+      error: !anythingSent && hasError
+        ? (sendResult.emailError || sendResult.smsError)
+        : null,
     });
 
   } catch (err) {
